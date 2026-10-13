@@ -12,6 +12,12 @@ public sealed class CommandLine
     public bool IsUnregisterOnly { get; init; }
     public bool CascadeMenu { get; init; }
 
+    /// <summary>--associate=.zip,.7z：把这些扩展名关联到 zzzip（无人值守可用）。</summary>
+    public IReadOnlyList<string> AssociateExtensions { get; init; } = [];
+
+    /// <summary>--dissociate=.zip：解除这些扩展名与 zzzip 的关联。</summary>
+    public IReadOnlyList<string> DissociateExtensions { get; init; } = [];
+
     /// <summary>静默模式：不弹任何对话框，错误写 stderr。供无人值守/自动化调用。</summary>
     public bool Silent { get; init; }
 
@@ -24,12 +30,16 @@ public sealed class CommandLine
         bool cascade = false;
         bool silent = false;
         var targets = new List<string>();
+        var associate = new List<string>();
+        var dissociate = new List<string>();
 
         foreach (var a in args)
         {
             if (a.StartsWith("--verb=", StringComparison.OrdinalIgnoreCase)) verb = a[7..];
             else if (a.StartsWith("--to=", StringComparison.OrdinalIgnoreCase)) extractTo = a[5..];
             else if (a.StartsWith("--name=", StringComparison.OrdinalIgnoreCase)) preset = a[7..];
+            else if (a.StartsWith("--associate=", StringComparison.OrdinalIgnoreCase)) associate.AddRange(SplitList(a[12..]));
+            else if (a.StartsWith("--dissociate=", StringComparison.OrdinalIgnoreCase)) dissociate.AddRange(SplitList(a[13..]));
             else if (string.Equals(a, "--pick", StringComparison.OrdinalIgnoreCase)) pick = true;
             else if (string.Equals(a, "--register", StringComparison.OrdinalIgnoreCase)) register = true;
             else if (string.Equals(a, "--unregister", StringComparison.OrdinalIgnoreCase)) unregister = true;
@@ -49,6 +59,14 @@ public sealed class CommandLine
             IsUnregisterOnly = unregister,
             CascadeMenu = cascade,
             Silent = silent,
+            AssociateExtensions = associate,
+            DissociateExtensions = dissociate,
         };
     }
+
+    /// <summary>把「.zip,.7z,rar」这类逗号/分号分隔列表拆成扩展名数组，自动补点并去重。</summary>
+    private static IEnumerable<string> SplitList(string value) =>
+        value.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+             .Select(e => e.StartsWith('.') ? e : "." + e)
+             .Distinct(StringComparer.OrdinalIgnoreCase);
 }

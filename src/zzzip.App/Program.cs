@@ -31,6 +31,18 @@ public static class Program
             return 0;
         }
 
+        // --associate / --dissociate：只改文件关联，不进 UI（供无人值守与自动测试使用）
+        if (cmd.AssociateExtensions.Count > 0 || cmd.DissociateExtensions.Count > 0)
+        {
+            if (cmd.DissociateExtensions.Count > 0)
+                ContextMenuRegistrar.Dissociate(cmd.DissociateExtensions);
+
+            if (cmd.AssociateExtensions.Count > 0)
+                ContextMenuRegistrar.Associate(cmd.AssociateExtensions, Environment.ProcessPath ?? "zzzip.exe");
+
+            return 0;
+        }
+
         if (cmd.Verb is not null)
         {
             try

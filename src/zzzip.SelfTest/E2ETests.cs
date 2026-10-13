@@ -115,6 +115,21 @@ public static class E2ETests
             TestHarness.True(File.Exists(Path.Combine(dir, "b.txt.zip")), "应产出 b.txt.zip");
         });
 
+        t.Run("端到端：--associate / --dissociate 往返（用测试专用扩展名，不动真实关联）", () =>
+        {
+            const string ext = "zzziptest";
+            using var _ = new AssocRestore(ext);
+
+            var (ca, _, ea) = Run(exe, ["--associate=." + ext], workDir);
+            TestHarness.Equal(0, ca, "--associate 退出码应为 0，stderr：" + ea);
+            TestHarness.True(zzzip.ShellReg.ContextMenuRegistrar.IsAssociated(ext),
+                "关联后应指向 zzzip。注意：1.0 版写到了 HKCU\\.ext（漏了 Software\\Classes），这里会直接暴露出来");
+
+            var (cd, _, ed) = Run(exe, ["--dissociate=." + ext], workDir);
+            TestHarness.Equal(0, cd, "--dissociate 退出码应为 0，stderr：" + ed);
+            TestHarness.False(zzzip.ShellReg.ContextMenuRegistrar.IsAssociated(ext), "解除后不应再指向 zzzip");
+        });
+
         t.Run("端到端：--register / --unregister 往返不留残留", () =>
         {
             using var _ = new RegistryRestore();
@@ -135,6 +150,15 @@ public static class E2ETests
         public void Dispose()
         {
             try { zzzip.ShellReg.ContextMenuRegistrar.Unregister(); } catch { }
+        }
+    }
+
+    /// <summary>测试结束后解除测试用扩展名的关联，绝不动用户真实的 .zip / .7z。</summary>
+    private sealed class AssocRestore(string ext) : IDisposable
+    {
+        public void Dispose()
+        {
+            try { zzzip.ShellReg.ContextMenuRegistrar.Dissociate(["." + ext]); } catch { }
         }
     }
 

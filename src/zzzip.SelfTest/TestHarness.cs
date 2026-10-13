@@ -24,7 +24,14 @@ public sealed class TestHarness
 
         // 在独立任务里执行，配合超时看门狗：任何交互式阻塞都不会挂死整个测试进程。
         var task = System.Threading.Tasks.Task.Run(body);
-        var finished = task.Wait(TimeSpan.FromSeconds(TestTimeoutSeconds));
+
+        // 【坑】Task.Wait(TimeSpan) 在任务「已经失败」时会立刻抛 AggregateException，
+        // 而不是返回 false —— 那样就绕过了下面的 try/catch，
+        // 结果是「一条断言失败 → 整个测试进程崩掉，后面的用例全部不跑」。
+        // 必须把异常吞掉交给下面的统一处理逻辑，才拿得到完整的测试报告。
+        bool finished;
+        try { finished = task.Wait(TimeSpan.FromSeconds(TestTimeoutSeconds)); }
+        catch (AggregateException) { finished = true; }
         sw.Stop();
 
         if (!finished)

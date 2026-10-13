@@ -93,9 +93,10 @@ def main():
     base.save(png_path, "PNG")
     print("PNG:", png_path)
 
-    # 多尺寸 ICO：16/24/32/48 用加粗版，64 以上用标准版
+    # 多尺寸 ICO：16/20/24/32/48 用加粗版，64 以上用标准版
+    # 20px 是标题栏实际显示尺寸，给一张同尺寸帧可避免 WPF 缩放带来的模糊
     frames = []
-    for sz in (16, 24, 32, 48):
+    for sz in (16, 20, 24, 32, 48):
         frames.append(small.resize((sz, sz), Image.LANCZOS))
     for sz in (64, 128, 256):
         frames.append(base.resize((sz, sz), Image.LANCZOS))

@@ -22,6 +22,7 @@ if $FRAMEWORK_DEPENDENT; then
   dotnet publish src/zzzip.App/zzzip.App.csproj \
     -c Release -r win-x64 --self-contained false \
     -p:PublishSingleFile=true \
+    -p:DebugType=none -p:DebugSymbols=false \
     -o "$OUT" --nologo
 else
   echo ">> 发布：自包含单文件版本（目标机无需安装 .NET）"
@@ -30,8 +31,13 @@ else
     -p:PublishSingleFile=true \
     -p:IncludeNativeLibrariesForSelfExtract=true \
     -p:EnableCompressionInSingleFile=true \
+    -p:DebugType=none -p:DebugSymbols=false \
     -o "$OUT" --nologo
 fi
+
+# 双保险：个别 SDK 版本即使关了 DebugSymbols 也会把附属 pdb 拷进输出目录，
+# 绿色版不需要调试符号，直接清掉（避免用户在目录里看到一堆无用文件）。
+find "$OUT" -maxdepth 1 -name '*.pdb' -delete 2>/dev/null || true
 
 # 随包附带 7-Zip 引擎（缺失时程序会自动降级为仅 ZIP，不会崩溃）
 SEVENZIP=""

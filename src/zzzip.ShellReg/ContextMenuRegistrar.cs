@@ -13,6 +13,14 @@ namespace zzzip.ShellReg;
 ///  2. 菜单文字与顺序 1:1 对齐 360，第一项即默认动作。
 ///  3. 支持层叠模式：勾选后普通文件与压缩包各只保留 1 个入口项，对应 360 的「层叠右键关联菜单」。
 ///  4. 便携模式：什么都不写注册表，卸载 = 删文件夹。
+///
+/// 【路径铁律】所有键都相对 HKCU 且必须带上 <c>Software\Classes\</c> 前缀。
+///   · 只被资源管理器识别的 verb 位置是 <c>Software\Classes\&lt;类&gt;\shell\&lt;动词名&gt;\command</c>，
+///     其中 &lt;类&gt; 取 <c>*</c>（所有文件）/ <c>Directory</c>（文件夹）/ <c>Drive</c>（驱动器）/
+///     <c>.ext</c>（具体扩展名）。
+///   · <c>shellex\ContextMenuHandlers</c> 是 COM 处理器专用位置，只有默认值填 CLSID 且该 CLSID
+///     已注册 InprocServer32 才会生效。我们不是 COM 组件，写它等于无效，反而让资源管理器去
+///     加载一个不存在的处理器 —— 这正是 1.0 版右键菜单完全不出现的根因。
 /// </summary>
 public sealed class ContextMenuRegistrar
 {
@@ -20,148 +28,352 @@ public sealed class ContextMenuRegistrar
     public static class Verbs
     {
         public const string AddToArchive = "add";       // 添加到压缩文件…
-        public const string QuickZip = "quickzip";      // 添加到"文件名.zip"
-        public const string HighRatio7z = "7z";         // 添加到高压缩比文件"文件名.7z"
+        public const string QuickZip = "quickzip";      // 添加到 ZIP 压缩包
+        public const string HighRatio7z = "7z";         // 添加到高压缩比 7Z 压缩包
         public const string EachSeparately = "each";    // 压缩每个文件到单独的压缩包中
-        public const string ZipAndMail = "mail";        // 添加到"文件名.zip"并邮件
-        public const string ExtractToOwn = "own";       // 解压到"文件名\"
+        public const string ZipAndMail = "mail";        // 添加到 ZIP 压缩包并邮件
+        public const string ExtractToOwn = "own";       // 解压到同名文件夹
         public const string ExtractHere = "here";       // 解压到当前文件夹
         public const string ExtractTo = "to";           // 解压到指定文件夹…
     }
 
-    private const string RegPath = @"Software\zzzip";
-    private const string MenuKey = @"Software\Classes\*\shellex\ContextMenuHandlers\zzzip";
-    private const string MenuKeyDir = @"Software\Classes\Directory\shellex\ContextMenuHandlers\zzzip";
-    private const string DriveMenuKey = @"Software\Classes\Drive\shellex\ContextMenuHandlers\zzzip";
+    /// <summary>一个右键菜单项：Verb 是命令行动作，KeyName 是注册表子键名，Label 是菜单文字。</summary>
+    public sealed record MenuItem(string Verb, string KeyName, string Label);
+
+    private const string ClassesRoot = @"Software\Classes";
+    private const string OptionsKey = @"Software\zzzip";
+    private const string FileExtsRoot = @"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts";
+
+    /// <summary>级联子菜单的承载键（相对 HKCR，即 HKCU\Software\Classes 下）。</summary>
+    private const string MoreMenuClass = "zzzip.menu.more";
+
+    /// <summary>verb 子键统一前缀，便于整体清理且不与别的软件撞名。</summary>
+    private const string KeyPrefix = "zzzip.";
+
+    /// <summary>所有 verb 挂载点：所有文件、文件夹、驱动器。</summary>
+    private static readonly string[] HostClasses = ["*", "Directory", "Drive"];
 
     private readonly string _exePath;
-    private readonly string _verbRoot;   // HKCU\Software\Classes\.zzzip.<guid>\shell
 
     public ContextMenuRegistrar(string exePath)
     {
-        _exePath = Path.GetFullPath(exePath);
-        var id = Guid.NewGuid().ToString("N");
-        _verbRoot = $@".zzzip.{id}\shell";
+        _exePath = ResolveExe(path: exePath);
+    }
+
+    /// <summary>把 exe 路径规范成绝对路径；传入相对路径时按当前工作目录解析。</summary>
+    private static string ResolveExe(string path)
+    {
+        try { return Path.GetFullPath(path); }
+        catch { return path; }
     }
 
     // ---------------------------------------------------------------- 菜单文案（与 360 一致）
 
-    /// <summary>普通文件/文件夹的菜单项（文字与顺序对齐 360）。</summary>
-    public static IReadOnlyList<(string Verb, string Label, bool IsSub)> FileMenuItems(bool cascade) => cascade
-        ? new[] { (Verbs.AddToArchive, "添加到压缩文件…", false) }
-        : new[]
-        {
-            (Verbs.AddToArchive,   "添加到压缩文件…",                           false),
-            (Verbs.QuickZip,       "添加到\"%f.zip\"",                          false),
-            ("__sub__",            "其他压缩命令",                               true ),
-            (Verbs.HighRatio7z,    "    添加到高压缩比文件\"%f.7z\"",             false),
-            (Verbs.EachSeparately, "    压缩每个文件到单独的压缩包中",           false),
-            (Verbs.ZipAndMail,     "    添加到\"%f.zip\"并邮件",               false),
-        };
+    /// <summary>
+    /// 普通文件/文件夹的菜单项（文字与顺序对齐 360 的「其他压缩命令」结构）。
+    /// 注：静态 verb 的菜单文字无法插入实际文件名（那需要 COM IContextMenu 动态生成），
+    /// 因此这里用等义的固定文案，核心动作与 360 一一对应。
+    /// </summary>
+    public static IReadOnlyList<MenuItem> FileMenuItems(bool cascade) => cascade
+        ? [new(Verbs.AddToArchive, KeyPrefix + Verbs.AddToArchive, "添加到压缩文件…")]
+        :
+        [
+            new(Verbs.AddToArchive, KeyPrefix + Verbs.AddToArchive, "添加到压缩文件…"),
+            new(Verbs.QuickZip,     KeyPrefix + Verbs.QuickZip,     "添加到 ZIP 压缩包"),
+            new("",                 KeyPrefix + "more",             "其他压缩命令"),
+        ];
+
+    /// <summary>「其他压缩命令」级联里的子项（对应 360 的 其他压缩命令 ▸）。</summary>
+    public static IReadOnlyList<MenuItem> MoreFileMenuItems() =>
+    [
+        new(Verbs.HighRatio7z,    KeyPrefix + Verbs.HighRatio7z,    "添加到高压缩比 7Z 压缩包"),
+        new(Verbs.EachSeparately, KeyPrefix + Verbs.EachSeparately, "压缩每个文件到单独的压缩包中"),
+        new(Verbs.ZipAndMail,     KeyPrefix + Verbs.ZipAndMail,     "添加到 ZIP 压缩包并邮件"),
+    ];
 
     /// <summary>压缩包右键菜单项（顺序与文字对齐 360，第一项为默认项）。</summary>
-    public static IReadOnlyList<(string Verb, string Label, bool IsSub)> ArchiveMenuItems(bool cascade) => cascade
-        ? new[] { (Verbs.ExtractToOwn, "解压到\"%f\"", false) }
-        : new[]
-        {
-            (Verbs.ExtractToOwn, "解压到\"%f\\\"",       false),
-            (Verbs.ExtractHere,  "解压到当前文件夹",        false),
-            (Verbs.ExtractTo,    "解压到指定文件夹…",       false),
-        };
+    public static IReadOnlyList<MenuItem> ArchiveMenuItems(bool cascade) => cascade
+        ? [new(Verbs.ExtractToOwn, KeyPrefix + Verbs.ExtractToOwn, "解压到同名文件夹")]
+        :
+        [
+            new(Verbs.ExtractToOwn, KeyPrefix + Verbs.ExtractToOwn, "解压到同名文件夹"),
+            new(Verbs.ExtractHere,  KeyPrefix + Verbs.ExtractHere,  "解压到当前文件夹"),
+            new(Verbs.ExtractTo,    KeyPrefix + Verbs.ExtractTo,    "解压到指定文件夹…"),
+        ];
 
     // ---------------------------------------------------------------- 注册
 
     /// <summary>写入右键菜单并刷新资源管理器缓存。返回已注册的处理器名。</summary>
     public IReadOnlyList<string> Register(bool cascade = false)
     {
+        // 只清菜单键：注册必须是幂等的，但绝不能顺手把用户已经建立的
+        // 文件关联（.ext 默认值 + ProgID）一起重置掉。
+        CleanupMenuKeys();
         RegisterFileVerbs(cascade);
         RegisterArchiveVerbs(cascade);
-
-        SetHandler(MenuKey, "ZZZIP.FileMenu");
-        SetHandler(MenuKeyDir, "ZZZIP.FileMenu");
-        SetHandler(DriveMenuKey, "ZZZIP.FileMenu");
-
-        foreach (var ext in FormatRegistry.AllExtNames())
-        {
-            SetHandler($@"Software\Classes\{ext}\shellex\ContextMenuHandlers\zzzip", "ZZZIP.ArchiveMenu");
-
-            // 在自定义类里登记 open 命令：供「打开方式」与双击兜底，不动系统已有关联
-            using var cmd = Registry.CurrentUser.CreateSubKey($@"Software\Classes\zzzip.assoc.{ext}\shell\open\command");
-            cmd?.SetValue("", $"\"{_exePath}\" \"%1\"");
-        }
-
+        WriteProgIds();            // 供「打开方式」与关联使用
         SaveOptions(cascade);
         NotifyShell();
+
         return cascade
-            ? new[] { "ZZZIP.FileMenu(层叠)", "ZZZIP.ArchiveMenu(层叠)" }
-            : new[] { "ZZZIP.FileMenu", "ZZZIP.ArchiveMenu" };
+            ? ["zzzip 文件菜单（层叠）", "zzzip 压缩包菜单（层叠）"]
+            : ["zzzip 文件菜单", "zzzip 压缩包菜单"];
     }
 
     public void RegisterFileVerbs(bool cascade)
     {
-        foreach (var (verb, label, isSub) in FileMenuItems(cascade))
+        foreach (var host in HostClasses)
         {
-            if (isSub) { WriteSubMenuShell(); continue; }
-            WriteVerb(verb, label.Replace("%f", "%1"), isDefault: verb == Verbs.AddToArchive);
+            foreach (var item in FileMenuItems(cascade))
+            {
+                // Verb 为空的条目即「其他压缩命令」级联入口
+                if (string.IsNullOrEmpty(item.Verb))
+                    WriteCascadeEntry(host, item);
+                else
+                    WriteVerb(host, item.KeyName, item.Label, item.Verb);
+            }
         }
+
+        if (!cascade)
+            WriteCascadeChildren();
     }
 
     public void RegisterArchiveVerbs(bool cascade)
     {
-        foreach (var (verb, label, _) in ArchiveMenuItems(cascade))
-            WriteVerb(verb, label.Replace("%f", "%1"), isDefault: verb == Verbs.ExtractToOwn);
+        foreach (var ext in FormatRegistry.AllExtNames())
+        {
+            var host = "." + ext;
+            foreach (var item in ArchiveMenuItems(cascade))
+                WriteVerb(host, item.KeyName, item.Label, item.Verb);
+        }
     }
 
-    private void WriteVerb(string verb, string label, bool isDefault)
+    /// <summary>写一个 verb：<c>Software\Classes\&lt;host&gt;\shell\&lt;key&gt;</c> + 其下 command。</summary>
+    private void WriteVerb(string host, string keyName, string label, string verb)
     {
-        using var k = Registry.CurrentUser.CreateSubKey($@"{_verbRoot}\{verb}");
-        if (k is null) return;
-        k.SetValue("", label);
-        k.SetValue("Icon", $"\"{_exePath}\",0");
-        if (isDefault) k.SetValue("Extended", 0);
+        var basePath = $@"{ClassesRoot}\{host}\shell\{keyName}";
+        TryWrite(() =>
+        {
+            using var k = Registry.CurrentUser.CreateSubKey(basePath);
+            if (k is null) return;
+            k.SetValue(null, label);
+            k.SetValue("Icon", $"\"{_exePath}\",0");
+            using var cmd = k.CreateSubKey("command");
+            // %1 由资源管理器替换为选中项；配合 MultiSelectModel=Player，
+            // 多选时资源管理器只调用一次并把所有选中项都传进来。
+            cmd?.SetValue(null, $"\"{_exePath}\" --verb={verb} \"%1\"");
+        });
     }
 
-    /// <summary>「其他压缩命令」级联子菜单（对应 360 的 其他压缩命令 ▸）。</summary>
-    private void WriteSubMenuShell()
+    /// <summary>
+    /// 层叠入口（对应 360 的「其他压缩命令 ▸」）。
+    /// 需要 <c>SubCommands=""</c> 与 <c>ExtendedSubCommandsKey</c> 成对出现，
+    /// 后者指向一个「带 shell 子键」的 HKCR 相对路径。
+    /// 单写一个 SubMenu 值是无效的（1.0 版的写法）。
+    /// </summary>
+    private void WriteCascadeEntry(string host, MenuItem item)
     {
-        using var k = Registry.CurrentUser.CreateSubKey($@"{_verbRoot}\__sub__");
-        if (k is null) return;
-        k.SetValue("", "其他压缩命令");
-        k.SetValue("SubMenu", "");
+        var basePath = $@"{ClassesRoot}\{host}\shell\{item.KeyName}";
+        TryWrite(() =>
+        {
+            using var k = Registry.CurrentUser.CreateSubKey(basePath);
+            if (k is null) return;
+            // 默认值与 MUIVerb 都写上：Windows 优先取 MUIVerb，
+            // 但部分旧版本在 SubCommands 场景下会回退读默认值，两个都设最稳。
+            k.SetValue(null, item.Label);
+            k.SetValue("MUIVerb", item.Label);
+            k.SetValue("SubCommands", string.Empty);
+            k.SetValue("ExtendedSubCommandsKey", MoreMenuClass);
+            k.SetValue("Icon", $"\"{_exePath}\",0");
+        });
     }
 
-    private void SetHandler(string path, string value)
+    /// <summary>级联子菜单的条目，集中放在 <c>Software\Classes\zzzip.menu.more\shell</c> 下。</summary>
+    private void WriteCascadeChildren()
     {
-        using var k = Registry.CurrentUser.CreateSubKey(path);
-        k?.SetValue("", value);
+        foreach (var item in MoreFileMenuItems())
+        {
+            var basePath = $@"{ClassesRoot}\{MoreMenuClass}\shell\{item.KeyName}";
+            TryWrite(() =>
+            {
+                using var k = Registry.CurrentUser.CreateSubKey(basePath);
+                if (k is null) return;
+                k.SetValue("MUIVerb", item.Label);
+                k.SetValue(null, item.Label);
+                k.SetValue("Icon", $"\"{_exePath}\",0");
+                using var cmd = k.CreateSubKey("command");
+                cmd?.SetValue(null, $"\"{_exePath}\" --verb={item.Verb} \"%1\"");
+            });
+        }
+    }
+
+    /// <summary>为每个压缩扩展名写入自定义 ProgID（含图标与 open 命令）。</summary>
+    private void WriteProgIds()
+    {
+        foreach (var ext in FormatRegistry.AllExtNames())
+            WriteProgId(ext, _exePath);
+    }
+
+    /// <summary>写一个自定义 ProgID：默认值（显示名）+ DefaultIcon + shell\open\command。</summary>
+    private static void WriteProgId(string ext, string exePath)
+    {
+        var progId = ProgIdFor(ext);
+        var display = FormatRegistry.Resolve("." + ext)?.DisplayName is { Length: > 0 } d
+            ? d + " 压缩包"
+            : "zzzip 压缩包";
+
+        TryWrite(() =>
+        {
+            using var pid = Registry.CurrentUser.CreateSubKey($@"{ClassesRoot}\{progId}");
+            if (pid is null) return;
+            pid.SetValue(null, display);
+            using var icon = pid.CreateSubKey("DefaultIcon");
+            icon?.SetValue(null, $"\"{exePath}\",0");
+            using var cmd = pid.CreateSubKey(@"shell\open\command");
+            cmd?.SetValue(null, $"\"{exePath}\" \"%1\"");
+        });
     }
 
     // ---------------------------------------------------------------- 卸载（无残留）
 
+    /// <summary>
+    /// 卸载：移除右键菜单 + 撤销本程序建立的全部文件关联 + 删除选项。
+    /// 对应命令行 <c>--unregister</c> 与「卸载 = 删键」的绿色承诺。
+    /// </summary>
     public static void Unregister()
     {
-        TryDelete(MenuKey);
-        TryDelete(MenuKeyDir);
-        TryDelete(DriveMenuKey);
+        CleanupMenuKeys();
+        ResetOwnedAssociations();
+        TryDelete(OptionsKey);
+        NotifyShell();
+    }
+
+    /// <summary>
+    /// 只移除右键菜单，保留文件关联。
+    /// 【选项】对话框里取消勾选「集成到资源管理器右键菜单」时用这个 ——
+    /// 关联是由下面的勾选框单独控制的，不该被菜单开关连带清掉。
+    /// </summary>
+    public static void UnregisterMenu()
+    {
+        CleanupMenuKeys();
+        NotifyShell();
+    }
+
+    /// <summary>只清理菜单相关的键（含 1.0 版写到错误位置的遗留），不碰文件关联。</summary>
+    private static void CleanupMenuKeys()
+    {
+        // 1) 当前版本的 verb
+        foreach (var host in HostClasses)
+            DeleteVerbSubKeys($@"{ClassesRoot}\{host}\shell");
 
         foreach (var ext in FormatRegistry.AllExtNames())
-        {
-            TryDelete($@"Software\Classes\{ext}\shellex\ContextMenuHandlers\zzzip");
-            TryDelete($@"Software\Classes\zzzip.assoc.{ext}");
-        }
+            DeleteVerbSubKeys($@"{ClassesRoot}\.{ext}\shell");
 
-        // 清理本程序创建的 .zzzip.* 类键（按前缀扫描）
+        TryDelete($@"{ClassesRoot}\{MoreMenuClass}");
+
+        // 2) 1.0 版错误的 COM 式路径（我们没有 COM 组件，写它只会让资源管理器
+        //    去加载一个不存在的处理器，右键菜单因此完全不出现）
+        foreach (var host in HostClasses)
+            TryDelete($@"{ClassesRoot}\{host}\shellex\ContextMenuHandlers\zzzip");
+
+        foreach (var ext in FormatRegistry.AllExtNames())
+            TryDelete($@"{ClassesRoot}\.{ext}\shellex\ContextMenuHandlers\zzzip");
+
+        // 3) 1.0 版把 verb 根写成了 HKCU\.zzzip.<guid>（漏了 Software\Classes 前缀）
+        DeleteHkcuRootJunk();
+    }
+
+    /// <summary>
+    /// 撤销本程序建立的全部文件关联。
+    /// 做法是扫描 Classes 下所有扩展名键，凡是默认值指向 <c>zzzip.assoc.*</c> 的都还原 ——
+    /// 比只遍历内置格式列表更彻底，用户在【选项】里勾过的任何扩展名都能覆盖到。
+    /// </summary>
+    private static void ResetOwnedAssociations()
+    {
         try
         {
-            using var classes = Registry.CurrentUser.OpenSubKey(@"Software\Classes");
-            if (classes?.GetSubKeyNames() is { } names)
-                foreach (var n in names.Where(n => n.StartsWith(".zzzip.", StringComparison.OrdinalIgnoreCase)))
-                    TryDelete($@"Software\Classes\{n}");
+            using var classes = Registry.CurrentUser.OpenSubKey(ClassesRoot);
+            if (classes?.GetSubKeyNames() is not { } names) return;
+
+            foreach (var n in names)
+            {
+                if (!n.StartsWith('.') || n.StartsWith(".zzzip.", StringComparison.OrdinalIgnoreCase)) continue;
+
+                try
+                {
+                    using var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\{n}", writable: true);
+                    if (k?.GetValue(null) is not string s) continue;
+                    if (!s.StartsWith("zzzip.assoc.", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    // 必须先摘掉默认值再删 ProgID，否则会留下指向不存在程序的关键字
+                    k.DeleteValue(string.Empty, throwOnMissingValue: false);
+                    ClearUserChoice(n.TrimStart('.'));
+                }
+                catch { /* 单个扩展名失败不应中断整体清理 */ }
+            }
+
+            // 再删掉所有自定义 ProgID
+            foreach (var n in names)
+                if (n.StartsWith("zzzip.assoc.", StringComparison.OrdinalIgnoreCase))
+                    TryDelete($@"{ClassesRoot}\{n}");
         }
         catch { /* 权限不足时静默 */ }
+    }
 
-        TryDelete(RegPath);
-        NotifyShell();
+    /// <summary>删除某个 shell 键下所有以 zzzip. 开头的 verb 子键。</summary>
+    private static void DeleteVerbSubKeys(string shellPath)
+    {
+        try
+        {
+            using var shell = Registry.CurrentUser.OpenSubKey(shellPath);
+            if (shell?.GetSubKeyNames() is not { } names) return;
+            foreach (var n in names.Where(n => n.StartsWith(KeyPrefix, StringComparison.OrdinalIgnoreCase)))
+                TryDelete($@"{shellPath}\{n}");
+        }
+        catch { /* 键不存在或无权限 */ }
+    }
+
+    /// <summary>清理 1.0 版误建在 HKCU 根下的 <c>.zzzip.*</c> 与 <c>.ext</c> 垃圾键。</summary>
+    private static void DeleteHkcuRootJunk()
+    {
+        try
+        {
+            using var hkcu = Registry.CurrentUser;
+            if (hkcu.GetSubKeyNames() is not { } names) return;
+
+            foreach (var n in names)
+            {
+                if (n.StartsWith(".zzzip.", StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDelete(n);
+                    continue;
+                }
+
+                // HKCU\.zip 这类：只有「空壳」或「只指向我们的 ProgID」时才认为是自己造成的
+                if (!n.StartsWith('.') || n.Length < 2) continue;
+                if (!FormatRegistry.KnownExtensions.Contains(n)) continue;
+                if (IsOurLeftoverRootKey(n)) TryDelete(n);
+            }
+        }
+        catch { /* 权限不足时静默 */ }
+    }
+
+    private static bool IsOurLeftoverRootKey(string name)
+    {
+        try
+        {
+            using var k = Registry.CurrentUser.OpenSubKey(name);
+            if (k is null) return false;
+            if (k.GetSubKeyNames().Length > 0) return false;
+
+            var valueNames = k.GetValueNames();
+            if (valueNames.Length == 0) return true;                       // 空壳键，肯定是残留
+
+            return valueNames.All(v => v.Length == 0)
+                   && k.GetValue(null) is string s
+                   && s.StartsWith("zzzip.assoc.", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
     }
 
     private static void TryDelete(string path)
@@ -170,57 +382,142 @@ public sealed class ContextMenuRegistrar
         catch { /* 键不存在或无权限 */ }
     }
 
+    private static void TryWrite(Action action)
+    {
+        try { action(); }
+        catch { /* 写注册表失败不应让 UI 崩掉；调用方可事后用 IsInstalled 复核 */ }
+    }
+
     // ---------------------------------------------------------------- 选项持久化
 
     public bool IsCascade { get; private set; }
 
+    /// <summary>判断是否已集成：以「*」类下的主菜单项是否存在为准。</summary>
     public static bool IsInstalled
     {
         get
         {
-            using var k = Registry.CurrentUser.OpenSubKey(MenuKey);
-            return k?.GetValue(null) is string s && s.Length > 0;
+            try
+            {
+                using var k = Registry.CurrentUser.OpenSubKey(
+                    $@"{ClassesRoot}\*\shell\{KeyPrefix}{Verbs.AddToArchive}");
+                return k?.GetValue(null) is string s && s.Length > 0;
+            }
+            catch { return false; }
         }
     }
 
     public void SaveOptions(bool cascade)
     {
-        using var k = Registry.CurrentUser.CreateSubKey(RegPath);
-        k?.SetValue("CascadeMenu", cascade ? 1 : 0);
-        k?.SetValue("ExePath", _exePath);
+        TryWrite(() =>
+        {
+            using var k = Registry.CurrentUser.CreateSubKey(OptionsKey);
+            k?.SetValue("CascadeMenu", cascade ? 1 : 0);
+            k?.SetValue("ExePath", _exePath);
+        });
         IsCascade = cascade;
     }
 
     public bool LoadOptions()
     {
-        using var k = Registry.CurrentUser.OpenSubKey(RegPath);
-        if (k?.GetValue("CascadeMenu") is int v) IsCascade = v == 1;
+        try
+        {
+            using var k = Registry.CurrentUser.OpenSubKey(OptionsKey);
+            if (k?.GetValue("CascadeMenu") is int v) IsCascade = v == 1;
+        }
+        catch { /* 读不到就用默认值 */ }
         return IsCascade;
     }
 
     // ---------------------------------------------------------------- 文件关联
 
-    /// <summary>把指定扩展名的默认打开程序设为 zzzip（工具 → 选项 → 文件关联）。</summary>
-    public static void Associate(IEnumerable<string> extensions)
+    /// <summary>扩展名对应的自定义 ProgID。</summary>
+    public static string ProgIdFor(string extension) =>
+        "zzzip.assoc." + extension.TrimStart('.').ToLowerInvariant();
+
+    /// <summary>该扩展名当前是否已关联到 zzzip。</summary>
+    public static bool IsAssociated(string extension)
     {
+        try
+        {
+            using var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\.{extension.TrimStart('.')}");
+            return string.Equals(k?.GetValue(null) as string, ProgIdFor(extension), StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// 把指定扩展名的默认打开程序设为 zzzip。
+    ///
+    /// 注意两点：
+    ///  1. 键必须写在 <c>HKCU\Software\Classes\.ext</c>（1.0 版漏了 Software\Classes 前缀，
+    ///     写到了 HKCU\.ext，等于什么都没做）；
+    ///  2. Win10/11 只要 `FileExts\.ext\UserChoice` 存在就会盖过 Classes 的默认值，
+    ///     必须把 UserChoice 删掉才能让新关联生效。删除一般可行（用户是键的所有者），
+    ///     写入则会被 ACL 拒绝 —— 失败时返回 false，由调用方提示用户手动改。
+    /// </summary>
+    public static bool Associate(IEnumerable<string> extensions, string exePath)
+    {
+        var exe = ResolveExe(exePath);
+        var allOk = true;
+
         foreach (var ext in extensions.Select(e => e.TrimStart('.')))
         {
-            using var k = Registry.CurrentUser.CreateSubKey($".{ext}");
-            k?.SetValue("", $"zzzip.assoc.{ext}");
+            WriteProgId(ext, exe);
+
+            TryWrite(() =>
+            {
+                using var k = Registry.CurrentUser.CreateSubKey($@"{ClassesRoot}\.{ext}");
+                k?.SetValue(null, ProgIdFor(ext));
+            });
+
+            if (!ClearUserChoice(ext)) allOk = false;
         }
+
         NotifyShell();
+        return allOk;
     }
 
     public static void Dissociate(IEnumerable<string> extensions)
     {
         foreach (var ext in extensions.Select(e => e.TrimStart('.')))
         {
-            using var k = Registry.CurrentUser.OpenSubKey($".{ext}", writable: true);
-            if (k?.GetValue(null) is string s && s.StartsWith("zzzip.assoc.", StringComparison.OrdinalIgnoreCase))
-                k.DeleteValue(string.Empty, throwOnMissingValue: false);
+            try
+            {
+                using var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\.{ext}", writable: true);
+                if (string.Equals(k?.GetValue(null) as string, ProgIdFor(ext), StringComparison.OrdinalIgnoreCase))
+                    k!.DeleteValue(string.Empty, throwOnMissingValue: false);
+            }
+            catch { /* 键不存在 */ }
+
+            TryDelete($@"{ClassesRoot}\{ProgIdFor(ext)}");
+            ClearUserChoice(ext);
         }
+
         NotifyShell();
     }
+
+    /// <summary>删除 UserChoice / UserChoiceLatest，让 Classes 里的默认值重新生效。</summary>
+    private static bool ClearUserChoice(string ext)
+    {
+        var ok = true;
+        foreach (var sub in new[] { "UserChoice", "UserChoiceLatest" })
+        {
+            var path = $@"{FileExtsRoot}\.{ext}\{sub}";
+            try
+            {
+                using var k = Registry.CurrentUser.OpenSubKey(path);
+                if (k is null) continue;              // 本来就没有，无需处理
+            }
+            catch { continue; }
+
+            try { Registry.CurrentUser.DeleteSubKeyTree(path, throwOnMissingSubKey: false); }
+            catch { ok = false; }                     // 被 ACL 挡住，需要用户手动改
+        }
+        return ok;
+    }
+
+    // ---------------------------------------------------------------- 资源管理器刷新
 
     /// <summary>刷新资源管理器缓存，否则要重启 explorer 才能看到菜单。</summary>
     [System.Runtime.InteropServices.DllImport("shell32.dll")]

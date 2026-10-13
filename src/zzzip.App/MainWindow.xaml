@@ -78,11 +78,10 @@
           <ColumnDefinition Width='*'/>
           <ColumnDefinition Width='Auto'/>
         </Grid.ColumnDefinitions>
-        <Border Grid.Column='0' Width='26' Height='26' CornerRadius='6' Background='#FF19A55A'
-                Margin='10,0,0,0' VerticalAlignment='Center'>
-          <TextBlock Text='z' Foreground='White' FontSize='15' FontWeight='Bold'
-                     HorizontalAlignment='Center' VerticalAlignment='Center'/>
-        </Border>
+        <!-- 直接使用程序图标本体，保证标题栏与任务栏/Alt+Tab/资源管理器中的图标完全一致 -->
+        <Image Grid.Column='0' Source='Assets/zzzip.ico' Width='20' Height='20'
+               Margin='10,0,0,0' VerticalAlignment='Center'
+               RenderOptions.BitmapScalingMode='HighQuality' RenderOptions.EdgeMode='Unspecified'/>
         <TextBlock x:Name='TitleText' Grid.Column='1' Text='zzzip' Margin='8,0,0,0'
                    VerticalAlignment='Center' Foreground='#FF23272B' FontWeight='SemiBold'/>
         <StackPanel Grid.Column='3' Orientation='Horizontal'>
