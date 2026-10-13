@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>zzzip.SelfTest</AssemblyName>
+    <RootNamespace>zzzip.SelfTest</RootNamespace>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\zzzip.Core\zzzip.Core.csproj" />
+    <ProjectReference Include="..\zzzip.ShellReg\zzzip.ShellReg.csproj" />
+  </ItemGroup>
+</Project>

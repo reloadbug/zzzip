@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="zzzip">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2BBF6E"/>
+      <stop offset="1" stop-color="#128C48"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 应用底：圆角方形，绿色主色 -->
+  <rect x="12" y="12" width="232" height="232" rx="46" fill="url(#g)"/>
+
+  <!-- 压缩包本体 -->
+  <rect x="72" y="52" width="112" height="152" rx="10" fill="#FFFFFF" opacity="0.96"/>
+
+  <!-- 拉链：竖直中线 + 齿 -->
+  <rect x="123" y="52" width="10" height="152" fill="#128C48"/>
+  <g fill="#FFFFFF">
+    <rect x="126" y="62" width="4" height="8" rx="1"/>
+    <rect x="126" y="78" width="4" height="8" rx="1"/>
+    <rect x="126" y="94" width="4" height="8" rx="1"/>
+    <rect x="126" y="110" width="4" height="8" rx="1"/>
+    <rect x="126" y="126" width="4" height="8" rx="1"/>
+    <rect x="126" y="142" width="4" height="8" rx="1"/>
+    <rect x="126" y="158" width="4" height="8" rx="1"/>
+    <rect x="126" y="174" width="4" height="8" rx="1"/>
+    <rect x="126" y="190" width="4" height="8" rx="1"/>
+  </g>
+
+  <!-- 拉链头 -->
+  <circle cx="128" cy="214" r="12" fill="#FFFFFF"/>
+  <circle cx="128" cy="214" r="6" fill="#128C48"/>
+
+  <!-- 左半区字母 z -->
+  <text x="99" y="140" font-family="Segoe UI, Microsoft YaHei UI, sans-serif" font-size="58"
+        font-weight="700" fill="#128C48" text-anchor="middle">z</text>
+</svg>

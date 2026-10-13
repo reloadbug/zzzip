@@ -1,0 +1,211 @@
+<Window x:Class='zzzip.App.MainWindow'
+        xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
+        xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'
+        xmlns:shell='clr-namespace:System.Windows.Shell;assembly=PresentationFramework'
+        Title='zzzip' Height='640' Width='960' MinHeight='460' MinWidth='720'
+        WindowStartupLocation='CenterScreen' Background='#FFF6F7F8'
+        Icon='Assets/zzzip.ico'
+        FontFamily='Microsoft YaHei UI, Segoe UI' FontSize='12'
+        UseLayoutRounding='True' TextOptions.TextFormattingMode='Display'>
+
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight='0' ResizeBorderThickness='6' CornerRadius='0'
+                        GlassFrameThickness='0' UseAeroCaptionButtons='False'/>
+  </shell:WindowChrome.WindowChrome>
+
+  <Window.Resources>
+    <Style x:Key='ToolbarBtn' TargetType='Button'>
+      <Setter Property='Background' Value='Transparent'/>
+      <Setter Property='BorderThickness' Value='0'/>
+      <Setter Property='Padding' Value='10,6'/>
+      <Setter Property='Margin' Value='2,0'/>
+      <Setter Property='Cursor' Value='Hand'/>
+      <Setter Property='Template'>
+        <Setter.Value>
+          <ControlTemplate TargetType='Button'>
+            <Border x:Name='Bd' Background='{TemplateBinding Background}' CornerRadius='4'
+                    Padding='{TemplateBinding Padding}'>
+              <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property='IsMouseOver' Value='True'>
+                <Setter TargetName='Bd' Property='Background' Value='#1F19A55A'/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key='WinBtn' TargetType='Button'>
+      <Setter Property='Background' Value='Transparent'/>
+      <Setter Property='BorderThickness' Value='0'/>
+      <Setter Property='Width' Value='44'/>
+      <Setter Property='Height' Value='30'/>
+      <Setter Property='FontSize' Value='12'/>
+      <Setter Property='Cursor' Value='Hand'/>
+      <Setter Property='Template'>
+        <Setter.Value>
+          <ControlTemplate TargetType='Button'>
+            <Border x:Name='Bd' Background='{TemplateBinding Background}'>
+              <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property='IsMouseOver' Value='True'>
+                <Setter TargetName='Bd' Property='Background' Value='#FFF0F1F2'/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+
+  <Border BorderBrush='#FFE3E6E9' BorderThickness='1' Background='#FFFFFFFF'>
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height='40'/>
+        <RowDefinition Height='30'/>
+        <RowDefinition Height='46'/>
+        <RowDefinition Height='*'/>
+        <RowDefinition Height='26'/>
+      </Grid.RowDefinitions>
+
+      <Grid Grid.Row='0' Background='#FFFFFFFF' MouseLeftButtonDown='OnTitleDrag'>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width='Auto'/>
+          <ColumnDefinition Width='Auto'/>
+          <ColumnDefinition Width='*'/>
+          <ColumnDefinition Width='Auto'/>
+        </Grid.ColumnDefinitions>
+        <Border Grid.Column='0' Width='26' Height='26' CornerRadius='6' Background='#FF19A55A'
+                Margin='10,0,0,0' VerticalAlignment='Center'>
+          <TextBlock Text='z' Foreground='White' FontSize='15' FontWeight='Bold'
+                     HorizontalAlignment='Center' VerticalAlignment='Center'/>
+        </Border>
+        <TextBlock x:Name='TitleText' Grid.Column='1' Text='zzzip' Margin='8,0,0,0'
+                   VerticalAlignment='Center' Foreground='#FF23272B' FontWeight='SemiBold'/>
+        <StackPanel Grid.Column='3' Orientation='Horizontal'>
+          <Button Style='{StaticResource WinBtn}' Content='—' Click='OnMinimize'/>
+          <Button Style='{StaticResource WinBtn}' Content='✕' Click='OnClose'/>
+        </StackPanel>
+      </Grid>
+
+      <Menu Grid.Row='1' Background='#FFFAFAFB' Foreground='#FF23272B'>
+        <MenuItem Header='文件(_F)' Height='29'>
+          <MenuItem Header='新建压缩文件(_N)...' Click='OnNewArchive'/>
+          <MenuItem Header='打开压缩文件(_O)...' Click='OnOpenArchive'/>
+          <Separator/>
+          <MenuItem Header='添加文件(_A)...' Click='OnAddFiles'/>
+          <MenuItem Header='添加文件夹(_D)...' Click='OnAddFolder'/>
+          <Separator/>
+          <MenuItem Header='关闭(_C)' Click='OnClose'/>
+        </MenuItem>
+        <MenuItem Header='编辑(_E)' Height='29'>
+          <MenuItem Header='全选(_A)' Click='OnSelectAll'/>
+          <MenuItem Header='取消全选(_D)' Click='OnUnselectAll'/>
+          <Separator/>
+          <MenuItem Header='刷新(_F)' Click='OnRefresh'/>
+        </MenuItem>
+        <MenuItem Header='查看(_V)' Height='29'>
+          <MenuItem Header='大图标' Click='OnViewLarge'/>
+          <MenuItem Header='详细信息' Click='OnViewDetails'/>
+          <Separator/>
+          <MenuItem Header='状态栏' IsCheckable='True' IsChecked='True'/>
+        </MenuItem>
+        <MenuItem Header='操作(_A)' Height='29'>
+          <MenuItem Header='解压到(_E)...' Click='OnExtractTo'/>
+          <MenuItem Header='一键解压(_F)' Click='OnOneClickExtract'/>
+          <MenuItem Header='测试压缩包(_T)' Click='OnTestArchive'/>
+          <Separator/>
+          <MenuItem Header='添加注释(_C)...' Click='OnAddComment'/>
+        </MenuItem>
+        <MenuItem Header='工具(_T)' Height='29'>
+          <MenuItem Header='选项(_O)...' Click='OnOptions'/>
+        </MenuItem>
+        <MenuItem Header='帮助(_H)' Height='29'>
+          <MenuItem Header='关于 zzzip(_A)' Click='OnAbout'/>
+        </MenuItem>
+      </Menu>
+
+      <Border Grid.Row='2' Background='#FFFFFFFF' BorderBrush='#FFE3E6E9' BorderThickness='0,0,0,1'>
+        <DockPanel Margin='8,0'>
+          <StackPanel Orientation='Horizontal' VerticalAlignment='Center' DockPanel.Dock='Left'>
+            <Button Style='{StaticResource ToolbarBtn}' Click='OnAddFiles' ToolTip='把文件加入压缩包'>
+              <StackPanel Orientation='Horizontal'>
+                <TextBlock Text='＋' Foreground='#FF19A55A' FontSize='14' Margin='0,0,6,0'/>
+                <TextBlock Text='添加'/>
+              </StackPanel>
+            </Button>
+            <Button Style='{StaticResource ToolbarBtn}' Click='OnExtractTo' ToolTip='解压到指定文件夹'>
+              <StackPanel Orientation='Horizontal'>
+                <TextBlock Text='⇩' Foreground='#FF19A55A' FontSize='14' Margin='0,0,6,0'/>
+                <TextBlock Text='解压到'/>
+              </StackPanel>
+            </Button>
+            <Button Style='{StaticResource ToolbarBtn}' Click='OnOneClickExtract' ToolTip='解压到同名文件夹'>
+              <StackPanel Orientation='Horizontal'>
+                <TextBlock Text='⚡' Foreground='#FF19A55A' FontSize='13' Margin='0,0,6,0'/>
+                <TextBlock Text='一键解压'/>
+              </StackPanel>
+            </Button>
+            <Button Style='{StaticResource ToolbarBtn}' Click='OnTestArchive' ToolTip='校验压缩包完整性'>
+              <StackPanel Orientation='Horizontal'>
+                <TextBlock Text='✔' Foreground='#FF19A55A' FontSize='13' Margin='0,0,6,0'/>
+                <TextBlock Text='测试'/>
+              </StackPanel>
+            </Button>
+            <Rectangle Width='1' Fill='#FFE3E6E9' Margin='6,10'/>
+            <Button Style='{StaticResource ToolbarBtn}' Click='OnDeleteEntry' ToolTip='从压缩包中删除'>
+              <StackPanel Orientation='Horizontal'>
+                <TextBlock Text='删除'/>
+              </StackPanel>
+            </Button>
+          </StackPanel>
+          <TextBlock x:Name='PathHint' DockPanel.Dock='Right' VerticalAlignment='Center'
+                     Foreground='#FF8A9099' Text='未打开压缩包'/>
+        </DockPanel>
+      </Border>
+
+      <Grid Grid.Row='3' Background='#FFFFFFFF'>
+        <ListView x:Name='EntryList' BorderThickness='0' Background='Transparent'
+                  MouseDoubleClick='OnEntryDoubleClick' AllowDrop='True'
+                  Drop='OnListDrop' DragOver='OnListDragOver'>
+          <ListView.View>
+            <GridView>
+              <GridViewColumn Header='名称' Width='380' DisplayMemberBinding='{Binding Path}'/>
+              <GridViewColumn Header='大小' Width='110' DisplayMemberBinding='{Binding SizeText}'/>
+              <GridViewColumn Header='压缩后' Width='110' DisplayMemberBinding='{Binding PackedSizeText}'/>
+              <GridViewColumn Header='压缩率' Width='80' DisplayMemberBinding='{Binding RatioText}'/>
+              <GridViewColumn Header='修改时间' Width='150' DisplayMemberBinding='{Binding ModifiedText}'/>
+            </GridView>
+          </ListView.View>
+          <ListView.ContextMenu>
+            <ContextMenu>
+              <MenuItem Header='打开(_O)' Click='OnEntryOpen'/>
+              <MenuItem Header='解压到(_E)...' Click='OnExtractTo'/>
+              <MenuItem Header='一键解压(_F)' Click='OnOneClickExtract'/>
+              <Separator/>
+              <MenuItem Header='删除(_D)' Click='OnDeleteEntry'/>
+              <MenuItem Header='全选(_A)' Click='OnSelectAll'/>
+            </ContextMenu>
+          </ListView.ContextMenu>
+        </ListView>
+
+        <TextBlock x:Name='EmptyHint'
+                   Text='拖拽文件/文件夹到此处，或点击左上角「添加」&#10;双击压缩包可直接打开浏览'
+                   Foreground='#FFB6BBC1' FontSize='13' HorizontalAlignment='Center'
+                   VerticalAlignment='Center' TextAlignment='Center' IsHitTestVisible='False'/>
+      </Grid>
+
+      <Border Grid.Row='4' Background='#FFF1F3F4' BorderBrush='#FFE3E6E9' BorderThickness='0,1,0,0'>
+        <DockPanel Margin='10,0'>
+          <TextBlock x:Name='StatusRight' DockPanel.Dock='Right' Foreground='#FF8A9099' VerticalAlignment='Center'/>
+          <TextBlock x:Name='StatusProgress' DockPanel.Dock='Right' Foreground='#FF19A55A'
+                     VerticalAlignment='Center' Margin='0,0,16,0' MinWidth='150' TextAlignment='Right'/>
+          <TextBlock x:Name='StatusLeft' Foreground='#FF8A9099' VerticalAlignment='Center'/>
+        </DockPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

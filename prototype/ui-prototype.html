@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zzzip 界面原型 · 对标 360zip</title>
+<style>
+  :root{
+    --accent:#19A55A; --accent-dark:#138C48; --accent-soft:rgba(25,165,90,.12);
+    --win-bg:#F6F7F8; --panel:#FFFFFF; --menubar:#FAFAFB; --border:#E3E6E9;
+    --text:#23272B; --text2:#8A9099; --hint:#B6BBC1; --status:#F1F3F4;
+    --font:"Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:28px 20px 60px; background:#EEF0F2; font-family:var(--font);
+    font-size:13px; color:var(--text);
+  }
+  h1{font-size:19px;margin:0 0 4px;font-weight:600;}
+  .sub{color:var(--text2);margin-bottom:22px;font-size:12px;}
+  h2{font-size:14px;font-weight:600;margin:30px 0 6px;display:flex;align-items:center;gap:8px;}
+  h2::before{content:"";width:4px;height:15px;background:var(--accent);border-radius:2px;}
+  .note{color:var(--text2);font-size:12px;margin:0 0 12px;line-height:1.7;}
+  .wrap{max-width:1080px;margin:0 auto;}
+  .row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;}
+
+  /* ---------- zzzip 主窗口 ---------- */
+  .win{
+    width:660px;background:#fff;border:1px solid var(--border);border-radius:8px;
+    overflow:hidden;box-shadow:0 6px 22px rgba(0,0,0,.09);flex:0 0 auto;
+  }
+  .titlebar{height:40px;display:flex;align-items:center;padding:0 0 0 10px;background:#fff;}
+  .logo{width:26px;height:26px;border-radius:6px;background:linear-gradient(#2BBF6E,#128C48);
+        color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;}
+  .titlebar .name{margin-left:8px;font-weight:600;}
+  .winbtns{margin-left:auto;display:flex;}
+  .winbtns span{width:44px;height:30px;display:flex;align-items:center;justify-content:center;
+                color:var(--text);cursor:default;font-size:12px;}
+  .winbtns span:hover{background:#F0F1F2;}
+
+  .menubar{height:30px;display:flex;align-items:center;background:var(--menubar);
+           border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:0 6px;}
+  .menubar div{padding:4px 10px;cursor:default;border-radius:3px;}
+  .menubar div:hover{background:var(--accent-soft);}
+
+  .toolbar{height:46px;display:flex;align-items:center;padding:0 8px;background:#fff;
+           border-bottom:1px solid var(--border);gap:2px;}
+  .tbtn{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:4px;cursor:pointer;}
+  .tbtn:hover{background:var(--accent-soft);}
+  .tbtn i{color:var(--accent);font-style:normal;font-size:14px;line-height:1;}
+  .tsep{width:1px;height:22px;background:var(--border);margin:0 6px;}
+  .pathhint{margin-left:auto;color:var(--text2);}
+
+  table{width:100%;border-collapse:collapse;}
+  thead td{color:var(--text2);font-size:12px;padding:7px 10px;border-bottom:1px solid var(--border);
+            background:#FCFCFD;}
+  tbody td{padding:6px 10px;border-bottom:1px solid #F2F4F5;}
+  tbody tr:hover{background:var(--accent-soft);}
+  tbody tr.sel{background:var(--accent-soft);}
+  .fname{display:flex;align-items:center;gap:7px;}
+  .fi{width:15px;height:15px;flex:0 0 auto;}
+  .empty{height:150px;display:flex;align-items:center;justify-content:center;
+         color:var(--hint);font-size:13px;text-align:center;line-height:1.8;}
+
+  .statusbar{height:26px;display:flex;align-items:center;padding:0 10px;background:var(--status);
+             border-top:1px solid var(--border);color:var(--text2);font-size:12px;}
+  .statusbar .right{margin-left:auto;}
+  .statusbar .prog{margin-left:auto;margin-right:16px;color:var(--accent);}
+
+  /* ---------- 对话框 ---------- */
+  .dlg{width:430px;background:#fff;border:1px solid var(--border);border-radius:8px;
+       box-shadow:0 6px 22px rgba(0,0,0,.09);overflow:hidden;flex:0 0 auto;}
+  .dlg .head{padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;}
+  .dlg .body{padding:14px 16px;}
+  .frow{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+  .frow label{width:84px;color:var(--text);flex:0 0 auto;}
+  .frow .ctl{flex:1;display:flex;gap:6px;}
+  .input{flex:1;height:26px;border:1px solid var(--border);border-radius:4px;padding:0 8px;
+         background:#fff;display:flex;align-items:center;font-size:12px;color:var(--text);}
+  .sel{flex:1;height:26px;border:1px solid var(--border);border-radius:4px;padding:0 8px;
+       display:flex;align-items:center;justify-content:space-between;background:#fff;font-size:12px;}
+  .sel::after{content:"▾";color:var(--text2);}
+  .btn{height:26px;padding:0 12px;border:1px solid var(--border);border-radius:4px;background:#fff;
+       display:flex;align-items:center;cursor:pointer;font-size:12px;}
+  .btn:hover{border-color:var(--accent);color:var(--accent);}
+  .chk{display:flex;align-items:center;gap:7px;margin:4px 0 4px 94px;font-size:12px;}
+  .box{width:13px;height:13px;border:1px solid #BFC5CB;border-radius:3px;flex:0 0 auto;background:#fff;}
+  .box.on{background:var(--accent);border-color:var(--accent);position:relative;}
+  .box.on::after{content:"✓";color:#fff;font-size:10px;position:absolute;left:1px;top:-2px;}
+  .dlg .foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;
+             border-top:1px solid var(--border);background:#FCFCFD;}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;width:96px;
+               justify-content:center;}
+  .btn.primary:hover{background:var(--accent-dark);}
+  .btn.wide{width:76px;justify-content:center;}
+  .desc{color:var(--text2);font-size:12px;line-height:1.7;margin:6px 0 0 94px;}
+
+  /* ---------- 右键菜单模拟 ---------- */
+  .exp{width:430px;background:#fff;border:1px solid var(--border);border-radius:8px;overflow:hidden;
+       box-shadow:0 6px 22px rgba(0,0,0,.09);flex:0 0 auto;}
+  .exp .head{padding:9px 14px;border-bottom:1px solid var(--border);color:var(--text2);font-size:12px;
+             display:flex;align-items:center;gap:8px;}
+  .exp .item{padding:8px 14px;display:flex;align-items:center;gap:9px;cursor:context-menu;}
+  .exp .item:hover{background:var(--accent-soft);}
+  .exp .item.note{color:var(--hint);cursor:default;font-size:12px;padding:6px 14px;}
+  .exp .item.note:hover{background:transparent;}
+
+  .menu{position:absolute;z-index:50;background:#FCFCFD;border:1px solid #D6D9DD;border-radius:6px;
+        box-shadow:0 8px 26px rgba(0,0,0,.18);padding:5px 0;min-width:230px;font-size:12.5px;
+        display:none;user-select:none;}
+  .menu.on{display:block;}
+  .mi{padding:6px 26px 6px 30px;position:relative;white-space:nowrap;display:flex;align-items:center;}
+  .mi:hover{background:#E9F3ED;}
+  .mi.disabled{color:#B0B6BC;}
+  .mi.sep{height:1px;padding:0;margin:5px 12px;background:#E3E6E9;}
+  .mi .arrow{margin-left:auto;padding-left:22px;color:#7A828A;}
+  .mi .grp{color:var(--text2);font-size:11px;padding:5px 30px 3px;}
+  .submenu{position:absolute;left:100%;top:-6px;background:#FCFCFD;border:1px solid #D6D9DD;
+           border-radius:6px;box-shadow:0 8px 26px rgba(0,0,0,.18);padding:5px 0;min-width:250px;
+           display:none;}
+  .mi:hover>.submenu{display:block;}
+  .zz{color:var(--accent-dark);font-weight:600;}
+
+  .toggle{display:inline-flex;align-items:center;gap:8px;margin-bottom:12px;user-select:none;cursor:pointer;}
+  .switch{width:38px;height:20px;border-radius:10px;background:#D3D8DD;position:relative;transition:.15s;}
+  .switch::after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;background:#fff;
+                 top:2px;left:2px;transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.25);}
+  .switch.on{background:var(--accent);}
+  .switch.on::after{left:20px;}
+  .hint{color:var(--text2);font-size:12px;}
+  .kbd{background:#fff;border:1px solid var(--border);border-radius:3px;padding:0 5px;font-size:11px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>zzzip 界面原型</h1>
+  <p class="sub">对标 360压缩 / 360zip ｜ 浅色扁平 + 绿色主色 ｜ 交互式原型，可点击体验右键菜单</p>
+
+  <!-- ============ 1. 主界面 ============ -->
+  <h2>主界面</h2>
+  <p class="note">标题栏（自绘）→ 菜单栏 → 工具栏（添加 / 解压到 / 一键解压 / 测试 / 删除）→ 列表区 → 状态栏。右下角为「双核引擎」状态位。</p>
+
+  <div class="win">
+    <div class="titlebar">
+      <div class="logo">z</div>
+      <div class="name">demo.7z - zzzip</div>
+      <div class="winbtns"><span>—</span><span>✕</span></div>
+    </div>
+    <div class="menubar">
+      <div>文件(<u>F</u>)</div><div>编辑(<u>E</u>)</div><div>查看(<u>V</u>)</div>
+      <div>操作(<u>A</u>)</div><div>工具(<u>T</u>)</div><div>帮助(<u>H</u>)</div>
+    </div>
+    <div class="toolbar">
+      <div class="tbtn"><i>＋</i>添加</div>
+      <div class="tbtn"><i>⇩</i>解压到</div>
+      <div class="tbtn"><i>⚡</i>一键解压</div>
+      <div class="tbtn"><i>✔</i>测试</div>
+      <div class="tsep"></div>
+      <div class="tbtn">删除</div>
+      <div class="pathhint">D:\work\demo</div>
+    </div>
+    <table>
+      <thead><tr><td style="width:44%">名称</td><td>大小</td><td>压缩后</td><td>压缩率</td><td>修改时间</td></tr></thead>
+      <tbody>
+        <tr class="sel"><td><div class="fname"><svg class="fi" viewBox="0 0 16 16"><path d="M2 2h5l1.5 2H14v9H2z" fill="#F0C36D" stroke="#D9A73F"/></svg>docs</div></td><td>-</td><td>-</td><td>-</td><td>2026-10-14 00:20</td></tr>
+        <tr><td><div class="fname"><svg class="fi" viewBox="0 0 16 16"><path d="M4 1h5l3 3v11H4z" fill="#fff" stroke="#B9C0C7"/><path d="M9 1v3h3" fill="none" stroke="#B9C0C7"/></svg>readme.txt</div></td><td>1.24 KB</td><td>612 B</td><td>51.8%</td><td>2026-10-13 22:04</td></tr>
+        <tr><td><div class="fname"><svg class="fi" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5" fill="#8AB4F8" stroke="#5A8FE0"/></svg>setup.exe</div></td><td>18.60 MB</td><td>17.92 MB</td><td>3.7%</td><td>2026-10-12 09:31</td></tr>
+      </tbody>
+    </table>
+    <div class="statusbar">
+      <span>3 个项目 ｜ 原始大小 18.61 MB ｜ 压缩后 17.93 MB</span>
+      <span class="right">7-Zip(7z.exe) + ZIP(内置) 双核</span>
+    </div>
+  </div>
+
+  <!-- ============ 2. 压缩设置对话框 ============ -->
+  <h2>压缩设置对话框</h2>
+  <p class="note">对应 360 的【您将创建一个压缩文件】。选中 ZIP 时「固实压缩」自动禁用并说明原因。</p>
+
+  <div class="row">
+    <div class="dlg">
+      <div class="head">您将创建一个压缩文件</div>
+      <div class="body">
+        <div class="frow"><label>文件名</label><div class="ctl"><div class="input">docs</div></div></div>
+        <div class="frow"><label>保存到</label><div class="ctl"><div class="input">D:\work\demo</div><div class="btn">浏览…</div></div></div>
+        <div class="frow"><label>压缩格式</label><div class="ctl"><div class="sel">7Z</div></div></div>
+        <div class="frow"><label>压缩等级</label><div class="ctl"><div class="sel">体积最小</div></div></div>
+        <div class="frow"><label>压缩分卷大小</label><div class="ctl"><div class="sel">不分卷</div></div></div>
+        <div class="chk"><div class="box on"></div>固实压缩（仅 7Z）</div>
+        <div class="chk"><div class="box"></div>创建自解压文件（EXE）</div>
+        <div class="frow"><label>加密码</label><div class="ctl"><div class="input">••••••••</div></div></div>
+        <div class="frow"><label>确认密码</label><div class="ctl"><div class="input">••••••••</div></div></div>
+        <div class="desc">7Z 支持固实压缩、AES-256 加密、分卷与自解压；选中 7Z 时默认建议「体积最小」。</div>
+      </div>
+      <div class="foot">
+        <div class="btn primary">立即压缩</div>
+        <div class="btn wide">取消</div>
+      </div>
+    </div>
+
+    <div class="dlg">
+      <div class="head">解压文件</div>
+      <div class="body">
+        <div class="frow"><label>解压到</label><div class="ctl"><div class="input">D:\work\demo\docs</div><div class="btn">浏览…</div></div></div>
+        <div class="frow"><label>密码</label><div class="ctl"><div class="input">••••••</div></div></div>
+        <div class="chk"><div class="box on"></div>覆盖已存在的文件</div>
+        <div class="chk"><div class="box on"></div>解压后保留压缩包</div>
+        <div class="desc">将解压压缩包内的全部内容</div>
+        <div style="margin:12px 0 0 94px;">
+          <div style="height:6px;background:#EDF0F2;border-radius:3px;overflow:hidden;">
+            <div style="width:62%;height:100%;background:var(--accent);"></div>
+          </div>
+          <div class="hint" style="margin-top:5px;">62%  docs\assets\hero.png</div>
+        </div>
+      </div>
+      <div class="foot">
+        <div class="btn primary">确定</div>
+        <div class="btn wide">取消</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 3. 右键菜单 ============ -->
+  <h2>资源管理器右键菜单</h2>
+  <p class="note">
+    在下面的文件上 <span class="kbd">右键单击</span> 查看 zzzip 的菜单。<b>压缩包</b>与<b>普通文件</b>的菜单项不同，
+    压缩包菜单的第一项 <code>解压到"文件名\"</code> 是默认动作。
+  </p>
+
+  <label class="toggle" id="cascadeToggle">
+    <div class="switch" id="cascadeSwitch"></div>
+    <span>层叠右键关联菜单（工具 → 选项 中的开关）</span>
+  </label>
+
+  <div class="row">
+    <div class="exp" id="expPane">
+      <div class="head">此电脑 › D:\work\demo</div>
+      <div class="item" data-kind="folder">
+        <svg class="fi" viewBox="0 0 16 16"><path d="M2 2h5l1.5 2H14v9H2z" fill="#F0C36D" stroke="#D9A73F"/></svg>docs
+      </div>
+      <div class="item" data-kind="file">
+        <svg class="fi" viewBox="0 0 16 16"><path d="M4 1h5l3 3v11H4z" fill="#fff" stroke="#B9C0C7"/><path d="M9 1v3h3" fill="none" stroke="#B9C0C7"/></svg>report.docx
+      </div>
+      <div class="item" data-kind="archive" data-name="photos">
+        <svg class="fi" viewBox="0 0 16 16"><path d="M2 2h5l1.5 2H14v9H2z" fill="#F0C36D" stroke="#D9A73F"/><circle cx="8" cy="8" r="2.6" fill="#fff" stroke="#D9A73F"/></svg>photos.zip
+      </div>
+      <div class="item" data-kind="archive" data-name="backup">
+        <svg class="fi" viewBox="0 0 16 16"><path d="M2 2h5l1.5 2H14v9H2z" fill="#9AD3B4" stroke="#5FAE86"/><circle cx="8" cy="8" r="2.6" fill="#fff" stroke="#5FAE86"/></svg>backup.7z
+      </div>
+      <div class="item" data-kind="archive" data-name="installer">
+        <svg class="fi" viewBox="0 0 16 16"><path d="M2 2h5l1.5 2H14v9H2z" fill="#C9B6F5" stroke="#9A83D6"/><circle cx="8" cy="8" r="2.6" fill="#fff" stroke="#9A83D6"/></svg>installer.rar
+      </div>
+      <div class="item note">在此处右键任意一项</div>
+    </div>
+
+    <div class="exp">
+      <div class="head">菜单说明</div>
+      <div style="padding:12px 14px;line-height:1.9;font-size:12px;color:var(--text2);">
+        <p style="margin:0 0 8px;"><span class="zz">普通文件 / 文件夹</span><br>添加到压缩文件… / 添加到"xxx.zip" / 其他压缩命令 ▸（3 项）</p>
+        <p style="margin:0 0 8px;"><span class="zz">压缩包</span><br>解压到"xxx\" / 解压到当前文件夹 / 解压到指定文件夹…</p>
+        <p style="margin:0;"><span class="zz">层叠模式</span><br>上面两组各折叠为 1 个入口项，菜单长度可控。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 右键菜单 -->
+<div class="menu" id="ctxMenu"></div>
+
+<script>
+(function(){
+  var expPane   = document.getElementById('expPane');
+  var menu      = document.getElementById('ctxMenu');
+  var toggle    = document.getElementById('cascadeToggle');
+  var switchEl  = document.getElementById('cascadeSwitch');
+  var cascade   = false;
+
+  var ICON = '<svg width="15" height="15" viewBox="0 0 16 16" style="flex:0 0 auto">' +
+             '<rect x="1" y="1" width="14" height="14" rx="3.5" fill="#19A55A"/>' +
+             '<text x="8" y="12" font-size="10" font-weight="700" fill="#fff" ' +
+             'text-anchor="middle" font-family="Segoe UI,sans-serif">z</text></svg>';
+
+  function fileMenu(name){
+    if(cascade){
+      return [
+        {html:'打开'},
+        {sep:true},
+        {html:ICON + '添加到压缩文件…'}
+      ];
+    }
+    return [
+      {html:'打开'},
+      {html:'打开方式…'},
+      {sep:true},
+      {html:ICON + '添加到压缩文件…'},
+      {html:'添加到"' + name + '.zip"'},
+      {html:'其他压缩命令', arrow:true, sub:[
+        {html:'添加到高压缩比文件"' + name + '.7z"'},
+        {html:'压缩每个文件到单独的压缩包中'},
+        {html:'添加到"' + name + '.zip"并邮件'}
+      ]},
+      {sep:true},
+      {html:'属性'}
+    ];
+  }
+
+  function archiveMenu(name){
+    if(cascade){
+      return [
+        {html:'打开'},
+        {sep:true},
+        {html:ICON + '解压到"' + name + '\\"'}
+      ];
+    }
+    return [
+      {html:'打开'},
+      {html:'打开方式…'},
+      {sep:true},
+      {html:ICON + '解压到"' + name + '\\"'},
+      {html:'解压到当前文件夹'},
+      {html:'解压到指定文件夹…'},
+      {sep:true},
+      {html:'属性'}
+    ];
+  }
+
+  function build(items){
+    var html = '';
+    items.forEach(function(it){
+      if(it.sep){ html += '<div class="mi sep"></div>'; return; }
+      var cls = 'mi' + (it.disabled ? ' disabled' : '');
+      html += '<div class="' + cls + '">' + it.html +
+              (it.arrow ? '<span class="arrow">▸</span>' : '') +
+              (it.sub ? '<div class="submenu">' + build(it.sub) + '</div>' : '') +
+              '</div>';
+    });
+    return html;
+  }
+
+  function showMenu(x, y, items){
+    menu.innerHTML = build(items);
+    menu.classList.add('on');
+    menu.style.left = '0px'; menu.style.top = '0px';
+    var w = menu.offsetWidth, h = menu.offsetHeight;
+    var maxX = window.scrollX + document.documentElement.clientWidth - w - 6;
+    var maxY = window.scrollY + document.documentElement.clientHeight - h - 6;
+    menu.style.left = Math.min(x + window.scrollX, maxX) + 'px';
+    menu.style.top  = Math.min(y + window.scrollY, maxY) + 'px';
+  }
+
+  function hideMenu(){ menu.classList.remove('on'); }
+
+  document.addEventListener('mousedown', function(e){
+    if(!menu.contains(e.target)) hideMenu();
+  });
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') hideMenu(); });
+  window.addEventListener('resize', hideMenu);
+  window.addEventListener('scroll', hideMenu, true);
+
+  expPane.addEventListener('contextmenu', function(e){
+    var item = e.target.closest('.item');
+    if(!item || item.classList.contains('note')) return;
+    e.preventDefault();
+    var kind = item.dataset.kind;
+    var name = item.dataset.name || item.textContent.trim();
+    showMenu(e.clientX, e.clientY,
+             kind === 'archive' ? archiveMenu(name) : fileMenu(name));
+  });
+
+  toggle.addEventListener('click', function(){
+    cascade = !cascade;
+    switchEl.classList.toggle('on', cascade);
+    hideMenu();
+  });
+})();
+</script>
+</body>
+</html>

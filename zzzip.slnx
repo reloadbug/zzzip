@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/zzzip.App/zzzip.App.csproj" />
+    <Project Path="src/zzzip.Core/zzzip.Core.csproj" />
+    <Project Path="src/zzzip.SelfTest/zzzip.SelfTest.csproj" />
+    <Project Path="src/zzzip.ShellReg/zzzip.ShellReg.csproj" />
+  </Folder>
+</Solution>
