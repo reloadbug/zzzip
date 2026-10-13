@@ -484,6 +484,9 @@ public sealed class ContextMenuRegistrar
     /// <summary>备份值：该扩展名原本没有指定默认动词。</summary>
     private const string NoShellVerb = "<none>";
 
+    /// <summary>备份值：该扩展名原本没有自定义图标（与上面取同一个字面量，可共存于同一份备份里）。</summary>
+    private const string NoIcon = "<none>";
+
     /// <summary>该扩展名当前是否已关联到 zzzip。</summary>
     public static bool IsAssociated(string extension)
     {
@@ -621,24 +624,20 @@ public sealed class ContextMenuRegistrar
     /// <summary>
     /// 把「打开」指定为该扩展名的默认动词 —— 也就是双击动作、右键菜单里的加粗项。
     ///
-    /// 只在原本没有指定默认动词时才写入：如果别的压缩软件已经占了这个位置
-    /// （比如 7-Zip 把自己设成了默认动词），我们就不越权抢它。
+    /// 【抢占语义】这个位置如果已经被别的压缩软件占着（WinRAR / 7-Zip / Bandizip
+    /// 都会把自己设成默认动词），我们**直接接过来**：用户在【选项】里勾选「关联」，
+    /// 表达的正是「让 zzzip 接管这类文件」，这与各压缩软件安装时的行为一致。
+    /// 被顶掉的原值会先记进备份，取消关联 / 卸载时原样还回去。
     /// </summary>
     private static void ClaimDefaultVerb(string ext)
     {
         var existing = ReadShellDefaultVerb(ext);
 
-        // 已经被别人指定过默认动词：不抢，也别留下无用备份
-        if (existing.Length > 0 && !existing.Equals(OpenVerbKey, StringComparison.OrdinalIgnoreCase))
-        {
-            DropValue(ShellVerbBackupName(ext));
-            return;
-        }
-
         TryWrite(() =>
         {
             // 备份只在「还没备份过」时写：反复勾选关联时，第二次不能把
-            // 我们刚写进去的 zzzip.open 当成"用户原来的默认动词"存起来。
+            // 我们刚写进去的 zzzip.open 当成"用户原来的默认动词"存起来，
+            // 也不能把最初记下的那个原值覆盖掉。
             using var bk = Registry.CurrentUser.CreateSubKey(BackupKey);
             if (bk?.GetValue(ShellVerbBackupName(ext)) is null)
                 bk?.SetValue(ShellVerbBackupName(ext),
@@ -695,7 +694,8 @@ public sealed class ContextMenuRegistrar
     /// ProgID 的 DefaultIcon，而资源管理器不总会采用我们写的 ProgID（见本节开头说明），
     /// 结果就是「关联看着成功了、图标还是系统那张空白文档」。写在这里才稳定生效。
     ///
-    /// 同样不抢别人的：已经被别的程序指定过图标就原样不动。
+    /// 与默认动词同样采取抢占语义：别的压缩软件设过的图标也一并接管，
+    /// 原值记进备份以便取消关联时还原。
     /// </summary>
     private static void ClaimExtensionIcon(string ext, string exePath)
     {
@@ -707,14 +707,10 @@ public sealed class ContextMenuRegistrar
             if (icon is null) return;
 
             var existing = icon.GetValue(null) as string ?? string.Empty;
-            var weWroteIt = ReadBackup(IconBackupName(ext)) is not null;
-
-            // 不是我们写的、而且已经有值 —— 那是别人的图标，不覆盖
-            if (!weWroteIt && existing.Length > 0) return;
 
             using var bk = Registry.CurrentUser.CreateSubKey(BackupKey);
             if (bk?.GetValue(IconBackupName(ext)) is null)
-                bk?.SetValue(IconBackupName(ext), existing.Length == 0 ? NoShellVerb : existing);
+                bk?.SetValue(IconBackupName(ext), existing.Length == 0 ? NoIcon : existing);
 
             icon.SetValue(null, ourIcon);
         });
@@ -731,7 +727,7 @@ public sealed class ContextMenuRegistrar
             using var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\.{ext}", writable: true);
             using var icon = k?.OpenSubKey("DefaultIcon", writable: true);
             if (icon is null) return;
-            if (backup == NoShellVerb)
+            if (backup == NoIcon)
                 icon.DeleteValue(string.Empty, throwOnMissingValue: false);
             else
                 icon.SetValue(null, backup);
@@ -755,7 +751,9 @@ public sealed class ContextMenuRegistrar
     }
 
     /// <summary>
-    /// 把指定扩展名的默认打开程序设为 zzzip。
+    /// 把指定扩展名的默认打开程序设为 zzzip —— 这是一次**接管**：
+    /// 该扩展名原有的默认程序、默认动词、图标都会换成 zzzip 的，
+    /// 原值逐项记进 <c>AssocBackup</c>，取消关联 / 卸载时还原。
     ///
     /// 注意两点：
     ///  1. 键必须写在 <c>HKCU\Software\Classes\.ext</c>（1.0 版漏了 Software\Classes 前缀，

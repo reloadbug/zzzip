@@ -384,21 +384,21 @@ public static class ShellRegTests
             finally { TryDeleteKey($@"{ClassesRoot}\.{TestExt}"); }
         });
 
-        t.Run("文件关联：不抢别的程序已指定的默认动词", () =>
+        t.Run("文件关联：抢占别的程序已指定的默认动词，取消关联时还回去", () =>
         {
             try
             {
-                // 模拟 7-Zip 之类已经占住了默认动词的位置
+                // 模拟 WinRAR / 7-Zip 之类已经占住了默认动词的位置
                 using (var k = Registry.CurrentUser.CreateSubKey($@"{ClassesRoot}\.{TestExt}\shell"))
                     k!.SetValue(null, "SevenZip.here");
 
                 ContextMenuRegistrar.Associate(["." + TestExt], exe);
-                TestHarness.Equal("SevenZip.here", ValueOf($@"{ClassesRoot}\.{TestExt}\shell"),
-                    "别人已指定的默认动词不该被抢走");
+                TestHarness.Equal("zzzip.open", ValueOf($@"{ClassesRoot}\.{TestExt}\shell"),
+                    "用户勾选了「关联」，默认动词就该被 zzzip 接管");
 
                 ContextMenuRegistrar.Dissociate(["." + TestExt]);
                 TestHarness.Equal("SevenZip.here", ValueOf($@"{ClassesRoot}\.{TestExt}\shell"),
-                    "取消关联也不该动别人的默认动词");
+                    "取消关联后应把默认动词还给原来的程序");
             }
             finally { TryDeleteKey($@"{ClassesRoot}\.{TestExt}"); }
         });
@@ -428,7 +428,7 @@ public static class ShellRegTests
             }
         });
 
-        t.Run("文件关联：不覆盖别的程序已设置的图标", () =>
+        t.Run("文件关联：抢占别的程序已设置的图标，取消关联时还回去", () =>
         {
             const string otherIcon = @"C:\Windows\System32\shell32.dll,5";
             try
@@ -437,8 +437,13 @@ public static class ShellRegTests
                     k!.SetValue(null, otherIcon);
 
                 ContextMenuRegistrar.Associate(["." + TestExt], exe);
+                var icon = ValueOf($@"{ClassesRoot}\.{TestExt}\DefaultIcon");
+                TestHarness.True(icon is not null && icon.Contains("zzzip-assoc-fake.exe"),
+                    "接管后图标应指向 zzzip：" + icon);
+
+                ContextMenuRegistrar.Dissociate(["." + TestExt]);
                 TestHarness.Equal(otherIcon, ValueOf($@"{ClassesRoot}\.{TestExt}\DefaultIcon"),
-                    "别人设置的图标不该被覆盖");
+                    "取消关联后应把图标还给原来的程序");
             }
             finally
             {
