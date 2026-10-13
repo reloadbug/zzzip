@@ -273,6 +273,51 @@ public static class ShellRegTests
             TestHarness.True(KeyExists($@"{ClassesRoot}\zzzip.assoc.{TestExt}") is false, "ProgID 未删除");
         });
 
+        t.Run("文件关联：取消关联会还原用户原有的默认程序", () =>
+        {
+            // 模拟「用户原本把该扩展名关联到别的压缩软件」
+            const string original = "ZZZipTestOther.zzziptest";
+            try
+            {
+                using (var k = Registry.CurrentUser.CreateSubKey($@"{ClassesRoot}\.{TestExt}"))
+                    k!.SetValue(null, original);
+
+                ContextMenuRegistrar.Associate(["." + TestExt], exe);
+                TestHarness.Equal("zzzip.assoc." + TestExt, ValueOf($@"{ClassesRoot}\.{TestExt}"),
+                    "关联后默认值应指向 zzzip");
+
+                ContextMenuRegistrar.Dissociate(["." + TestExt]);
+                TestHarness.Equal(original, ValueOf($@"{ClassesRoot}\.{TestExt}"),
+                    "取消关联后必须还原成用户原来的默认程序，而不是把默认值一删了事");
+            }
+            finally
+            {
+                TryDeleteKey($@"{ClassesRoot}\.{TestExt}");
+            }
+        });
+
+        t.Run("文件关联：反复勾选再取消，仍还原成最初的原默认程序", () =>
+        {
+            const string original = "AnotherApp.zzziptest";
+            try
+            {
+                using (var k = Registry.CurrentUser.CreateSubKey($@"{ClassesRoot}\.{TestExt}"))
+                    k!.SetValue(null, original);
+
+                // 勾选两次：第二次若把备份覆盖成自己的 ProgID，取消关联后会指向不存在的程序
+                ContextMenuRegistrar.Associate(["." + TestExt], exe);
+                ContextMenuRegistrar.Associate(["." + TestExt], exe);
+                ContextMenuRegistrar.Dissociate(["." + TestExt]);
+
+                TestHarness.Equal(original, ValueOf($@"{ClassesRoot}\.{TestExt}"),
+                    "重复关联后取消，应还原成最初的原默认程序（备份不可被自我覆盖）");
+            }
+            finally
+            {
+                TryDeleteKey($@"{ClassesRoot}\.{TestExt}");
+            }
+        });
+
         t.Run("文件关联：卸载程序会重置仍指向 zzzip 的扩展名（不留下坏关联）", () =>
         {
             ContextMenuRegistrar.Associate(["." + TestExt], exe);
@@ -306,6 +351,13 @@ public static class ShellRegTests
             return k is not null;
         }
         catch { return false; }
+    }
+
+    /// <summary>删除测试期间临时造出来的键，避免污染用户注册表。</summary>
+    private static void TryDeleteKey(string path)
+    {
+        try { Registry.CurrentUser.DeleteSubKeyTree(path, throwOnMissingSubKey: false); }
+        catch { /* 删不掉也不该让测试失败 */ }
     }
 
     private static string[] SubKeysOf(string path)

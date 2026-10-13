@@ -1,6 +1,7 @@
 using System.Text;
 using zzzip.Core;
 using zzzip.SelfTest;
+using zzzip.ShellReg;
 
 // zzzip 自动测试入口。
 // 用法： zzzip.SelfTest.exe [--exe=<zzzip.exe 路径>] [--work=<临时工作目录>] [--keep]
@@ -33,6 +34,17 @@ harness.Write($"工作目录：{workDir}");
 harness.Write($"zzzip.exe：{exePath ?? "(未找到，端到端测试将跳过)"}");
 ArchiveEngineRouter.EnsureConfigured();
 harness.Write($"压缩引擎：{ArchiveEngineRouter.EngineSummary}");
+
+// 这组测试会真实地反复装卸资源管理器右键菜单（【二】里直接写注册表，
+// 【三】里还会调用 exe 的 --unregister）。先记下用户当前装没装、装的是哪个 exe，
+// 整个测试跑完再原样恢复 —— 否则「跑一次自测」就会把用户已经装好的菜单弄没。
+// 注意必须在最外层恢复：【三】的 --unregister 会在【二】之后再把菜单删一次。
+var preInstalled = ContextMenuRegistrar.IsInstalled;
+var preExe = preInstalled ? InstalledExePath() : null;
+var preCascade = ReadCascadeOption();
+harness.Write(preInstalled
+    ? $"右键菜单现场：已安装（{preExe}），测试结束后将恢复"
+    : "右键菜单现场：未安装，测试结束后保持未安装");
 harness.Write(string.Empty);
 
 try
@@ -50,6 +62,19 @@ try
 }
 finally
 {
+    if (preInstalled && preExe is not null)
+    {
+        try
+        {
+            new ContextMenuRegistrar(preExe).Register(preCascade);
+            harness.Write("已恢复测试前的右键菜单安装状态。");
+        }
+        catch (Exception ex)
+        {
+            harness.Write($"!! 恢复右键菜单失败：{ex.Message}");
+        }
+    }
+
     if (!keep)
     {
         try { Directory.Delete(workDir, recursive: true); } catch { }
@@ -60,6 +85,39 @@ var logPath = Path.Combine(AppContext.BaseDirectory, "selftest-result.txt");
 var failures = harness.Report(logPath);
 harness.Write($"日志已保存：{logPath}");
 return failures;
+
+/// <summary>从已写入的 command 值里解析出当前注册用的 exe 路径（供测试后恢复现场）。</summary>
+static string? InstalledExePath()
+{
+    try
+    {
+        using var k = Microsoft.Win32.Registry.CurrentUser
+            .OpenSubKey(@"Software\Classes\*\shell\zzzip.add\command");
+        var s = (k?.GetValue(null) as string)?.Trim();
+        if (string.IsNullOrEmpty(s)) return null;
+
+        if (s[0] == '"')
+        {
+            var end = s.IndexOf('"', 1);
+            if (end > 1) return s[1..end];
+        }
+        var sp = s.IndexOf(' ');
+        return sp > 0 ? s[..sp] : s;
+    }
+    catch { return null; }
+}
+
+/// <summary>读回菜单的层叠模式开关，恢复时保持用户原来的形态。</summary>
+static bool ReadCascadeOption()
+{
+    try
+    {
+        using var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\zzzip");
+        var v = k?.GetValue("CascadeMenu");
+        return v is not null && v.ToString() == "1";
+    }
+    catch { return false; }
+}
 
 static string? AutoLocateApp()
 {

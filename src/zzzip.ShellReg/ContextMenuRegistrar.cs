@@ -301,13 +301,13 @@ public sealed class ContextMenuRegistrar
 
                 try
                 {
-                    using var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\{n}", writable: true);
-                    if (k?.GetValue(null) is not string s) continue;
-                    if (!s.StartsWith("zzzip.assoc.", StringComparison.OrdinalIgnoreCase)) continue;
+                    var ext = n.TrimStart('.');
+                    if (!IsAssociated(ext)) continue;
 
-                    // 必须先摘掉默认值再删 ProgID，否则会留下指向不存在程序的关键字
-                    k.DeleteValue(string.Empty, throwOnMissingValue: false);
-                    ClearUserChoice(n.TrimStart('.'));
+                    // 还原到关联前记录的默认程序（没有记录才只是清空），
+                    // 否则卸载会把用户原来的 WinRAR / 7-Zip 关联一起弄丢。
+                    RestoreDefault(ext);
+                    ClearUserChoice(ext);
                 }
                 catch { /* 单个扩展名失败不应中断整体清理 */ }
             }
@@ -435,6 +435,17 @@ public sealed class ContextMenuRegistrar
     public static string ProgIdFor(string extension) =>
         "zzzip.assoc." + extension.TrimStart('.').ToLowerInvariant();
 
+    /// <summary>
+    /// 关联前备份用户原有默认 ProgID 的位置。
+    /// 【为什么需要】Windows 的「默认打开方式」就是 <c>Classes\.ext</c> 的默认值。
+    /// 我们把它改成 zzzip 之后，如果取消关联时只是把默认值删掉，用户原来的
+    /// WinRAR / 7-Zip 关联就永久丢了 —— 必须记下原值再还原。
+    /// </summary>
+    private const string BackupKey = @"Software\zzzip\AssocBackup";
+
+    /// <summary>备份值：该扩展名原本就没有默认 ProgID（不是"没备份"）。</summary>
+    private const string NoProgId = "<none>";
+
     /// <summary>该扩展名当前是否已关联到 zzzip。</summary>
     public static bool IsAssociated(string extension)
     {
@@ -444,6 +455,70 @@ public sealed class ContextMenuRegistrar
             return string.Equals(k?.GetValue(null) as string, ProgIdFor(extension), StringComparison.OrdinalIgnoreCase);
         }
         catch { return false; }
+    }
+
+    private static string ReadDefaultProgId(string ext)
+    {
+        try
+        {
+            using var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\.{ext}");
+            return k?.GetValue(null) as string ?? string.Empty;
+        }
+        catch { return string.Empty; }
+    }
+
+    /// <summary>
+    /// 关联前记下用户原有的默认 ProgID。
+    /// 只在「还没备份过」时写：用户可能反复勾选/取消，如果每次都覆盖，
+    /// 第二次就会把我们自己刚写进去的 zzzip.assoc.* 当成"原值"存起来，
+    /// 取消关联后反而指向一个不存在的程序。
+    /// </summary>
+    private static void BackupDefault(string ext)
+    {
+        var current = ReadDefaultProgId(ext);
+        if (current.StartsWith("zzzip.assoc.", StringComparison.OrdinalIgnoreCase)) return;
+
+        TryWrite(() =>
+        {
+            using var bk = Registry.CurrentUser.CreateSubKey(BackupKey);
+            if (bk is null) return;
+            if (bk.GetValue(ext) is null)
+                bk.SetValue(ext, current.Length == 0 ? NoProgId : current);
+        });
+    }
+
+    /// <summary>还原成关联前记录的默认 ProgID；没有备份记录时只把默认值清掉。</summary>
+    private static void RestoreDefault(string ext)
+    {
+        string? backup = null;
+        try
+        {
+            using var bk = Registry.CurrentUser.OpenSubKey(BackupKey);
+            backup = bk?.GetValue(ext) as string;
+        }
+        catch { /* 读不到就按"没有备份"处理 */ }
+
+        TryWrite(() =>
+        {
+            using var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\.{ext}", writable: true);
+            if (k is null) return;
+            if (backup is null || backup == NoProgId)
+                k.DeleteValue(string.Empty, throwOnMissingValue: false);
+            else
+                k.SetValue(null, backup);
+        });
+
+        DropBackup(ext);
+    }
+
+    /// <summary>丢弃某个扩展名的备份记录（不影响默认值）。</summary>
+    private static void DropBackup(string ext)
+    {
+        TryWrite(() =>
+        {
+            using var bk = Registry.CurrentUser.OpenSubKey(BackupKey, writable: true);
+            bk?.DeleteValue(ext, throwOnMissingValue: false);
+        });
     }
 
     /// <summary>
@@ -464,6 +539,7 @@ public sealed class ContextMenuRegistrar
         foreach (var ext in extensions.Select(e => e.TrimStart('.')))
         {
             WriteProgId(ext, exe);
+            BackupDefault(ext);                  // 必须先备份，后覆盖默认值
 
             TryWrite(() =>
             {
@@ -478,20 +554,23 @@ public sealed class ContextMenuRegistrar
         return allOk;
     }
 
+    /// <summary>取消关联：还原成关联前的默认程序，而不是把默认值一删了事。</summary>
     public static void Dissociate(IEnumerable<string> extensions)
     {
         foreach (var ext in extensions.Select(e => e.TrimStart('.')))
         {
-            try
+            if (IsAssociated(ext))
             {
-                using var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\.{ext}", writable: true);
-                if (string.Equals(k?.GetValue(null) as string, ProgIdFor(ext), StringComparison.OrdinalIgnoreCase))
-                    k!.DeleteValue(string.Empty, throwOnMissingValue: false);
+                RestoreDefault(ext);
+                ClearUserChoice(ext);
             }
-            catch { /* 键不存在 */ }
+            else
+            {
+                // 默认值已经不是我们的（用户自己改过）：不动它，也别留下无用备份
+                DropBackup(ext);
+            }
 
             TryDelete($@"{ClassesRoot}\{ProgIdFor(ext)}");
-            ClearUserChoice(ext);
         }
 
         NotifyShell();

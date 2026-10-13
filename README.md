@@ -22,8 +22,12 @@
 
 ## 核心特性
 
-- **右键即用**：菜单项与 360zip 逐条对齐，`解压到"xxx\"` 为默认动作。
+- **右键即用**：菜单项与 360zip 逐条对齐，解压时以「解压到同名文件夹」为默认动作。
+  受 Windows 静态 verb 限制，菜单文字是固定文案（`添加到压缩文件…`），
+  无法像 360zip 那样在菜单里拼出真实文件名 —— 那需要随包注册 COM `IContextMenu`，
+  与「绿色、零残留、可卸载」的目标冲突，故不采用（动作与 360 一一对应）。
 - **绿色便携**：全部写入 HKCU，配置落在 exe 同级；卸载 = 删目录，注册表零残留（有自动化测试保证）。
+- **关联可逆**：改文件关联前先备份原有默认程序，取消关联/卸载时原样还原。
 - **双核引擎**：ZIP 走 .NET 内置实现（零依赖）；其余 40+ 格式驱动官方 7-Zip。7z.exe 缺失时自动降级为「仅 ZIP」并给出中文提示，**不崩溃**。
 - **安全**：解压前做 Zip Slip 越界校验，恶意 `../` 条目被直接阻断；磁盘空间不足提前告警。
 - **不阻塞**：`--silent` 模式下错误写 stderr，绝不弹窗挂死（供自动化/计划任务调用）。
@@ -46,10 +50,17 @@ src/zzzip.App/bin/Release/net10.0-windows/zzzip.exe
 # 集成 / 移除资源管理器右键菜单
 zzzip.exe --register          # 完整菜单
 zzzip.exe --register --cascade  # 层叠模式（只保留一个入口项）
-zzzip.exe --unregister        # 完全移除
+zzzip.exe --unregister        # 完全移除（同时还原被本程序改过的文件关联）
+
+# 文件关联（无人值守可用；也可在【选项】对话框里勾选）
+zzzip.exe --associate=.zip,.7z   # 把这些扩展名关联到 zzzip
+zzzip.exe --dissociate=.zip      # 还原成关联前的默认程序
 ```
 
 > 7-Zip 引擎需 `7z.exe`。查找顺序：环境变量 `ZZZIP_7Z` → exe 同级目录 → `PATH` → `Program Files\7-Zip`。
+>
+> 文件关联是**可逆**的：写入前会先把原有的默认程序记在 `HKCU\Software\zzzip\AssocBackup`，
+> 取消关联或卸载时还原回去，不会把用户原来的 WinRAR / 7-Zip 关联弄丢。
 
 ---
 
