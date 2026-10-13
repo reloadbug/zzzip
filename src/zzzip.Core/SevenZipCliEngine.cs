@@ -43,9 +43,33 @@ public sealed class SevenZipCliEngine : IArchiveEngine
 
     public static bool IsAvailable => LocateExecutable() is not null;
 
+    /// <summary>环境变量：显式禁用 7-Zip 引擎，只保留内置 ZIP 内核。</summary>
+    /// <remarks>
+    /// 两个用途：① 机器上的 7z.exe 损坏、或用户就是想只用内置内核时可以强制降级；
+    /// ② 自动化测试用它模拟「7z.exe 缺失」，不必真去删文件（也就不会污染开发机）。
+    /// 它优先于探测缓存，设置后立即生效，不需要重启进程。
+    /// </remarks>
+    private const string DisableEnvVar = "ZZZIP_DISABLE_7Z";
+
+    public static bool IsDisabledByUser
+    {
+        get
+        {
+            var v = Environment.GetEnvironmentVariable(DisableEnvVar);
+            if (string.IsNullOrWhiteSpace(v)) return false;
+            return v == "1"
+                || v.Equals("true", StringComparison.OrdinalIgnoreCase)
+                || v.Equals("yes", StringComparison.OrdinalIgnoreCase)
+                || v.Equals("on", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     /// <summary>按优先级查找 7z.exe：环境变量 → exe 同级 → PATH → 常见安装目录。</summary>
     public static string? LocateExecutable()
     {
+        // 禁用开关要优先于缓存判断：否则一旦探测过一次，后面再设开关就不生效了
+        if (IsDisabledByUser) return null;
+
         if (_probed) return _cachedExe;
         _probed = true;
 

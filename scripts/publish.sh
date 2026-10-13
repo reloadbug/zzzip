@@ -62,6 +62,25 @@ fi
 [[ -f "$ROOT/README.md" ]] && cp "$ROOT/README.md" "$OUT/使用说明.md"
 [[ -f "$ROOT/native/7z/README.md" ]] && cp "$ROOT/native/7z/README.md" "$OUT/7-Zip引擎说明.md"
 
+# 打成可分发的 zip（解压即用）。用随包的 7z.exe 完成，不额外依赖 zip 命令。
+VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' "$ROOT/src/zzzip.App/zzzip.App.csproj" | head -1)
+VERSION="${VERSION:-0.0.0}"
+DIST_NAME="zzzip-${VERSION}-win-x64.zip"
+DIST_PATH="$ROOT/artifacts/$DIST_NAME"
+
+if [[ -n "$SEVENZIP" ]]; then
+  rm -f "$DIST_PATH"
+  # 在产物目录内以相对路径输出，避开 Git Bash 与 7z 之间的路径写法差异
+  if ( cd "$OUT" && "$SEVENZIP" a -tzip "../$DIST_NAME" ./* > /dev/null ); then
+    echo ">> 已打包分发文件：$DIST_PATH"
+    echo "   $(du -h "$DIST_PATH" | cut -f1)  sha256=$(sha256sum "$DIST_PATH" | cut -c1-16)…"
+  else
+    echo "!! 打包失败（7z 返回非 0），发布目录本身仍可直接使用。"
+  fi
+else
+  echo "!! 未找到 7z.exe，跳过 zip 打包。"
+fi
+
 echo
 echo ">> 完成：$OUT"
 ls -lh "$OUT"

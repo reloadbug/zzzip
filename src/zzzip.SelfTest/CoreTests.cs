@@ -195,6 +195,58 @@ public static class CoreTests
             TestHarness.Contains(ArchiveEngineRouter.EngineSummary, "7-Zip");
         });
 
+        // 验收标准第 6 条：7z.exe 缺失时必须降级为仅 ZIP 并给出中文提示，而不是崩溃。
+        // 用环境变量模拟缺失（比真删文件干净，也不会污染开发机）。
+        t.Run("引擎路由：7z.exe 缺失时降级为仅 ZIP 并给出中文提示", () =>
+        {
+            var dir = Path.Combine(workDir, "no7z");
+            Directory.CreateDirectory(dir);
+            var src = Path.Combine(dir, "a.txt");
+            File.WriteAllText(src, "降级测试", Encoding.UTF8);
+            var zipPath = Path.Combine(dir, "a.zip");
+
+            try
+            {
+                Environment.SetEnvironmentVariable("ZZZIP_DISABLE_7Z", "1");
+                ArchiveEngineRouter.Configure(null);   // 关键字面：让它按缺失重新路由
+
+                TestHarness.False(ArchiveEngineRouter.HasSevenZip, "禁用后不应再报告 7-Zip 可用");
+                TestHarness.Contains(ArchiveEngineRouter.EngineSummary, "未检测到 7-Zip",
+                    "引擎摘要必须明确告知用户 7-Zip 缺失，而不是含糊带过");
+
+                // 1) 纯 ZIP 仍必须可用 —— 走内置内核，功能不能因为缺 7z 就整体瘫掉
+                ArchiveEngineRouter.Create([src], zipPath,
+                    new ArchiveOptions { Format = FormatRegistry.Zip }, null, default);
+                TestHarness.True(File.Exists(zipPath), "降级后仍应能用内置内核创建 ZIP");
+                TestHarness.Equal(1, ArchiveEngineRouter.List(zipPath).Count,
+                    "降级后仍应能用内置内核列出 ZIP 内容");
+
+                // 2) 非 ZIP 格式不能静默失败，要抛出可读的中文提示且指出解决办法
+                var nonZip = TestHarness.Throws<NotSupportedException>(
+                    () => ArchiveEngineRouter.List(Path.Combine(dir, "a.7z")));
+                TestHarness.Contains(nonZip.Message, "7z.exe", "提示里应告诉用户把 7z.exe 放到哪里");
+                TestHarness.Contains(nonZip.Message, "7-Zip", "提示里应点名是 7-Zip 引擎缺失");
+
+                // 3) 加密 ZIP 也一样：明确拒绝并说明原因，而不是生成一个没加密的包
+                var enc = TestHarness.Throws<NotSupportedException>(() =>
+                    ArchiveEngineRouter.ForCreate(new ArchiveOptions
+                    {
+                        Format = FormatRegistry.Zip,
+                        Password = "secret",
+                    }));
+                TestHarness.Contains(enc.Message, "7-Zip", "拒绝加密 ZIP 的理由应指向 7-Zip 引擎");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("ZZZIP_DISABLE_7Z", null);
+                ArchiveEngineRouter.Configure(null);   // 恢复真实探测结果，避免影响后续用例
+            }
+
+            // 降级必须是临时的：开关一撤，引擎应立刻回来（本机本来就没有 7z 时不做此断言）
+            if (has7z)
+                TestHarness.True(ArchiveEngineRouter.HasSevenZip, "撤掉开关后应重新探测到 7-Zip 引擎");
+        });
+
         t.Run("7-Zip 内核：7Z 格式创建 → 列出 → 解压往返", () =>
         {
             if (!has7z) TestHarness.Skip("本机未找到 7z.exe");

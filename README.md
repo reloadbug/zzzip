@@ -15,8 +15,12 @@
 | 45 种扩展名解压 / ZIP · 7Z · TAR · GZIP 创建 | 已完成 |
 | AES-256 加密 · 固实压缩 · 分卷 · 自解压 EXE · 注释 | 已完成 |
 | 资源管理器右键菜单（含层叠模式） | 已完成 |
-| 文件关联管理 | 已完成 |
-| 自动测试（库级 + 端到端） | 已完成 |
+| 文件关联管理（可逆，会还原原有默认程序） | 已完成 |
+| 自动测试（42 项，库级 + 端到端） | 已完成 |
+| 自包含单文件打包与发布（v1.0.0） | 已完成 |
+
+**下载**：[Releases · v1.0.0](https://github.com/reloadbug/zzzip/releases/tag/v1.0.0)
+→ `zzzip-1.0.0-win-x64.zip`（54 MB，解压即用，目标机无需安装 .NET 运行时）
 
 ---
 
@@ -40,9 +44,14 @@
 # 构建
 dotnet build zzzip.slnx -c Release
 
+# 打发布包（自包含单文件 + 7-Zip 引擎 + 说明；同时产出可分发的 zip）
+bash scripts/publish.sh
+#   → artifacts/zzzip-win-x64/                 解压即用的绿色目录
+#   → artifacts/zzzip-1.0.0-win-x64.zip        可直接分发的压缩包
+
 # 运行自动测试（退出码 = 失败数，0 表示全部通过）
 src/zzzip.SelfTest/bin/Release/net10.0-windows/zzzip.SelfTest.exe \
-  --exe=src/zzzip.App/bin/Release/net10.0-windows/zzzip.exe
+  --exe=artifacts/zzzip-win-x64/zzzip.exe
 
 # 启动主界面
 src/zzzip.App/bin/Release/net10.0-windows/zzzip.exe
@@ -58,6 +67,7 @@ zzzip.exe --dissociate=.zip      # 还原成关联前的默认程序
 ```
 
 > 7-Zip 引擎需 `7z.exe`。查找顺序：环境变量 `ZZZIP_7Z` → exe 同级目录 → `PATH` → `Program Files\7-Zip`。
+> 设 `ZZZIP_DISABLE_7Z=1` 可强制禁用 7-Zip 引擎（只保留内置 ZIP 内核），用于引擎损坏时排查。
 >
 > 文件关联是**可逆**的：写入前会先把原有的默认程序记在 `HKCU\Software\zzzip\AssocBackup`，
 > 取消关联或卸载时还原回去，不会把用户原来的 WinRAR / 7-Zip 关联弄丢。
