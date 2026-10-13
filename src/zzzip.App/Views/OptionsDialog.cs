@@ -242,6 +242,8 @@ public sealed class OptionsDialog : Window
             needManual = !ok;
 
             assocResult = $"已关联 {toAssociate.Count} 个扩展名，已解除 {toDissociate.Count} 个。";
+            if (toAssociate.Count > 0)
+                assocResult += "\n双击压缩包会用 zzzip 打开界面浏览（不会就地解压）。";
             if (needManual)
                 assocResult += "\n部分扩展名由系统「默认应用」锁定，需手动指定。";
         }

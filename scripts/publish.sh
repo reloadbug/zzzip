@@ -14,7 +14,10 @@ OUT="$ROOT/artifacts/zzzip-win-x64"
 FRAMEWORK_DEPENDENT=false
 [[ "${1:-}" == "-f" ]] && FRAMEWORK_DEPENDENT=true
 
-rm -rf "$OUT"
+# 清理旧产物。加固环境（如安全中心的删除拦截）会把 rm 改写成「移入回收站」，
+# 并在部分失败时中断整个脚本 —— 这里容忍失败：publish 是覆盖写，
+# 残留的同名旧文件会被直接盖掉，随包文件随后也会重新拷贝。
+rm -rf "$OUT" 2>/dev/null || true
 mkdir -p "$OUT"
 
 if $FRAMEWORK_DEPENDENT; then

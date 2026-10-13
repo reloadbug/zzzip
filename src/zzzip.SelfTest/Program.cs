@@ -45,6 +45,16 @@ var preCascade = ReadCascadeOption();
 harness.Write(preInstalled
     ? $"右键菜单现场：已安装（{preExe}），测试结束后将恢复"
     : "右键菜单现场：未安装，测试结束后保持未安装");
+
+// 文件关联同样会被【三】的 --unregister 连带清掉：卸载的定义就是把所有默认值
+// 指向 zzzip.assoc.* 的扩展名还原成原程序。所以也要记下现场 —— 而且要记下
+// 用户当初用的那个 exe：自测的 exe 躺在临时目录里，跑完就被删了，
+// 拿它去恢复等于给用户留一堆指向不存在文件的关联。
+var preAssociated = AssociatedExtensions();
+var preAssocExe = preAssociated.Count > 0 ? AssociationExePath(preAssociated[0]) : null;
+harness.Write(preAssociated.Count > 0
+    ? $"文件关联现场：{preAssociated.Count} 个扩展名（{string.Join(' ', preAssociated)}），测试结束后将恢复"
+    : "文件关联现场：无，测试结束后保持无关联");
 harness.Write(string.Empty);
 
 try
@@ -62,6 +72,20 @@ try
 }
 finally
 {
+    // 先恢复关联，再恢复菜单：Register 只重建菜单键，不会碰文件关联。
+    if (preAssociated.Count > 0 && preAssocExe is not null)
+    {
+        try
+        {
+            ContextMenuRegistrar.Associate(preAssociated, preAssocExe);
+            harness.Write($"已恢复测试前的文件关联（{preAssociated.Count} 个扩展名）。");
+        }
+        catch (Exception ex)
+        {
+            harness.Write($"!! 恢复文件关联失败：{ex.Message}");
+        }
+    }
+
     if (preInstalled && preExe is not null)
     {
         try
@@ -93,16 +117,58 @@ static string? InstalledExePath()
     {
         using var k = Microsoft.Win32.Registry.CurrentUser
             .OpenSubKey(@"Software\Classes\*\shell\zzzip.add\command");
-        var s = (k?.GetValue(null) as string)?.Trim();
-        if (string.IsNullOrEmpty(s)) return null;
+        return ParseExeFromCommand(k?.GetValue(null) as string);
+    }
+    catch { return null; }
+}
 
-        if (s[0] == '"')
+/// <summary>命令行字符串 → exe 路径。形如 "C:\...\zzzip.exe" --verb=add "%1"。</summary>
+static string? ParseExeFromCommand(string? s)
+{
+    s = s?.Trim();
+    if (string.IsNullOrEmpty(s)) return null;
+
+    if (s[0] == '"')
+    {
+        var end = s.IndexOf('"', 1);
+        if (end > 1) return s[1..end];
+    }
+    var sp = s.IndexOf(' ');
+    return sp > 0 ? s[..sp] : s;
+}
+
+/// <summary>列出当前所有默认值指向 zzzip 的扩展名（供测试后恢复现场）。</summary>
+static List<string> AssociatedExtensions()
+{
+    var found = new List<string>();
+    try
+    {
+        using var classes = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Classes");
+        if (classes?.GetSubKeyNames() is not { } names) return found;
+
+        foreach (var n in names)
         {
-            var end = s.IndexOf('"', 1);
-            if (end > 1) return s[1..end];
+            if (!n.StartsWith('.') || n.StartsWith(".zzzip.", StringComparison.OrdinalIgnoreCase)) continue;
+            try
+            {
+                var ext = n.TrimStart('.');
+                if (ContextMenuRegistrar.IsAssociated(ext)) found.Add(ext);
+            }
+            catch { /* 单个扩展名读失败不影响其他 */ }
         }
-        var sp = s.IndexOf(' ');
-        return sp > 0 ? s[..sp] : s;
+    }
+    catch { /* 读不到就按「没有关联」处理 */ }
+    return found;
+}
+
+/// <summary>从 ProgID 的 open 命令里解析出关联时所用的 exe 路径。</summary>
+static string? AssociationExePath(string ext)
+{
+    try
+    {
+        using var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            $@"Software\Classes\zzzip.assoc.{ext}\shell\open\command");
+        return ParseExeFromCommand(k?.GetValue(null) as string);
     }
     catch { return null; }
 }

@@ -234,6 +234,10 @@ public static class ShellRegTests
     {
         var exe = Path.Combine(Path.GetTempPath(), "zzzip-assoc-fake.exe");
 
+        // 备份键摘在 Software\zzzip\AssocBackup 下，不会随 .ext 键一起被删。
+        // 上一轮跑剩的记录会让「这个图标是我们写的吗」判断失真，先清干净再测。
+        ClearTestBackupValues();
+
         t.Run("文件关联：写在 Software\\Classes\\.ext 下并指向自定义 ProgID", () =>
         {
             try
@@ -329,6 +333,119 @@ public static class ShellRegTests
             TestHarness.False(ContextMenuRegistrar.IsAssociated(TestExt), "卸载后不应仍指向已删除的 ProgID");
             TestHarness.True(KeyExists($@"{ClassesRoot}\zzzip.assoc.{TestExt}") is false, "卸载后 ProgID 未清理");
         });
+
+        // 用户实测反馈：关联之后双击压缩包会直接就地解压。根因是「默认动词」没人指定，
+        // Windows 取合并列表里的第一个 verb，而 zzzip.here 按字母序排在最前。
+        t.Run("文件关联：默认动词是「打开」，不是就地解压", () =>
+        {
+            try
+            {
+                ContextMenuRegistrar.Associate(["." + TestExt], exe);
+
+                // ProgID 层：显式声明 open。不写这条，一旦该 ProgID 被系统采用，
+                // 默认动作就会退化成某个解压项。
+                TestHarness.Equal("open", ValueOf($@"{ClassesRoot}\zzzip.assoc.{TestExt}\shell"),
+                    "ProgID 的 shell 默认值应为 open");
+
+                // 扩展名层：真正决定双击动作的就是这一层
+                TestHarness.Equal("zzzip.open", ValueOf($@"{ClassesRoot}\.{TestExt}\shell"),
+                    "扩展名的默认动词应指向 zzzip 的「打开」");
+
+                var openCmd = ValueOf($@"{ClassesRoot}\.{TestExt}\shell\zzzip.open\command");
+                TestHarness.True(openCmd is not null, "缺少「打开」verb 的命令");
+                TestHarness.True(openCmd!.Contains("\"%1\""), "「打开」应把文件路径交给主窗口：" + openCmd);
+                TestHarness.False(openCmd.Contains("--verb="),
+                    "「打开」不能带 --verb（那会变成执行某个解压动作而不是打开界面）：" + openCmd);
+                TestHarness.Equal("打开", ValueOf($@"{ClassesRoot}\.{TestExt}\shell\zzzip.open"),
+                    "菜单文字应为「打开」");
+            }
+            finally
+            {
+                ContextMenuRegistrar.Dissociate(["." + TestExt]);
+                TryDeleteKey($@"{ClassesRoot}\.{TestExt}");
+            }
+        });
+
+        t.Run("文件关联：取消关联会还原默认动词并收走「打开」", () =>
+        {
+            try
+            {
+                ContextMenuRegistrar.Associate(["." + TestExt], exe);
+                TestHarness.Equal("zzzip.open", ValueOf($@"{ClassesRoot}\.{TestExt}\shell"),
+                    "前置条件：应先认领默认动词");
+
+                ContextMenuRegistrar.Dissociate(["." + TestExt]);
+
+                TestHarness.True(ValueOf($@"{ClassesRoot}\.{TestExt}\shell") is null,
+                    "取消关联后默认动词应清空，实际：" + ValueOf($@"{ClassesRoot}\.{TestExt}\shell"));
+                TestHarness.False(KeyExists($@"{ClassesRoot}\.{TestExt}\shell\zzzip.open"),
+                    "「打开」verb 未清理");
+            }
+            finally { TryDeleteKey($@"{ClassesRoot}\.{TestExt}"); }
+        });
+
+        t.Run("文件关联：不抢别的程序已指定的默认动词", () =>
+        {
+            try
+            {
+                // 模拟 7-Zip 之类已经占住了默认动词的位置
+                using (var k = Registry.CurrentUser.CreateSubKey($@"{ClassesRoot}\.{TestExt}\shell"))
+                    k!.SetValue(null, "SevenZip.here");
+
+                ContextMenuRegistrar.Associate(["." + TestExt], exe);
+                TestHarness.Equal("SevenZip.here", ValueOf($@"{ClassesRoot}\.{TestExt}\shell"),
+                    "别人已指定的默认动词不该被抢走");
+
+                ContextMenuRegistrar.Dissociate(["." + TestExt]);
+                TestHarness.Equal("SevenZip.here", ValueOf($@"{ClassesRoot}\.{TestExt}\shell"),
+                    "取消关联也不该动别人的默认动词");
+            }
+            finally { TryDeleteKey($@"{ClassesRoot}\.{TestExt}"); }
+        });
+
+        // 关联「看着成功、图标还是系统那张空白文档」——图标取自扩展名键这一层
+        t.Run("文件关联：图标写在扩展名键上，取消关联后还原", () =>
+        {
+            try
+            {
+                ContextMenuRegistrar.Associate(["." + TestExt], exe);
+
+                var icon = ValueOf($@"{ClassesRoot}\.{TestExt}\DefaultIcon");
+                TestHarness.True(icon is not null && icon.Contains("zzzip-assoc-fake.exe"),
+                    "扩展名图标应指向 zzzip：" + icon);
+
+                ContextMenuRegistrar.Dissociate(["." + TestExt]);
+
+                var after = ValueOf($@"{ClassesRoot}\.{TestExt}\DefaultIcon");
+                TestHarness.True(after is null, "取消关联后图标应清空，实际：" + after);
+            }
+            finally
+            {
+                // Dissociate 必须调用：它负责清掉备份键里的记录，
+                // 只删 .ext 会留下痕迹污染后续用例。
+                ContextMenuRegistrar.Dissociate(["." + TestExt]);
+                TryDeleteKey($@"{ClassesRoot}\.{TestExt}");
+            }
+        });
+
+        t.Run("文件关联：不覆盖别的程序已设置的图标", () =>
+        {
+            const string otherIcon = @"C:\Windows\System32\shell32.dll,5";
+            try
+            {
+                using (var k = Registry.CurrentUser.CreateSubKey($@"{ClassesRoot}\.{TestExt}\DefaultIcon"))
+                    k!.SetValue(null, otherIcon);
+
+                ContextMenuRegistrar.Associate(["." + TestExt], exe);
+                TestHarness.Equal(otherIcon, ValueOf($@"{ClassesRoot}\.{TestExt}\DefaultIcon"),
+                    "别人设置的图标不该被覆盖");
+            }
+            finally
+            {
+                ContextMenuRegistrar.Dissociate(["." + TestExt]);
+                TryDeleteKey($@"{ClassesRoot}\.{TestExt}");
+            }
+        });
     }
 
     // ---------------------------------------------------------------- 注册表读取辅助
@@ -358,6 +475,23 @@ public static class ShellRegTests
     {
         try { Registry.CurrentUser.DeleteSubKeyTree(path, throwOnMissingSubKey: false); }
         catch { /* 删不掉也不该让测试失败 */ }
+    }
+
+    /// <summary>
+    /// 清掉备份键里属于测试扩展名的记录。
+    /// 备份记录挂在 <c>Software\zzzip\AssocBackup</c> 下，不随 <c>.ext</c> 键一起删；
+    /// 残留会让下一个用例误判「这个默认动词/图标是我们写过的」。
+    /// </summary>
+    private static void ClearTestBackupValues()
+    {
+        try
+        {
+            using var bk = Registry.CurrentUser.OpenSubKey(OptKey + @"\AssocBackup", writable: true);
+            if (bk is null) return;
+            foreach (var name in new[] { TestExt, TestExt + "|verb", TestExt + "|icon" })
+                bk.DeleteValue(name, throwOnMissingValue: false);
+        }
+        catch { /* 备份键不存在时无需处理 */ }
     }
 
     private static string[] SubKeysOf(string path)

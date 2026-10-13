@@ -229,6 +229,12 @@ public sealed class ContextMenuRegistrar
             pid.SetValue(null, display);
             using var icon = pid.CreateSubKey("DefaultIcon");
             icon?.SetValue(null, $"\"{exePath}\",0");
+
+            // 显式声明 ProgID 的默认动词是「打开」。不写这一行时，一旦该 ProgID 被系统采用，
+            // 默认动作会退化成「动词列表的第一个」——也就是某个解压项。
+            using var shell = pid.CreateSubKey("shell");
+            shell?.SetValue(null, "open");
+
             using var cmd = pid.CreateSubKey(@"shell\open\command");
             cmd?.SetValue(null, $"\"{exePath}\" \"%1\"");
         });
@@ -302,6 +308,12 @@ public sealed class ContextMenuRegistrar
                 try
                 {
                     var ext = n.TrimStart('.');
+
+                    // 默认动词和图标要先收：它们会残留 —— 用户后来自己改过默认程序时，
+                    // 扩展名默认值已经不属于我们，但 zzzip.open 与 .ext\DefaultIcon 还在。
+                    ReleaseDefaultVerb(ext);
+                    ReleaseExtensionIcon(ext);
+
                     if (!IsAssociated(ext)) continue;
 
                     // 还原到关联前记录的默认程序（没有记录才只是清空），
@@ -327,7 +339,11 @@ public sealed class ContextMenuRegistrar
         {
             using var shell = Registry.CurrentUser.OpenSubKey(shellPath);
             if (shell?.GetSubKeyNames() is not { } names) return;
-            foreach (var n in names.Where(n => n.StartsWith(KeyPrefix, StringComparison.OrdinalIgnoreCase)))
+            // 排除 zzzip.open：它属于「文件关联」而非「右键菜单」。若被菜单重建顺手删掉，
+            // 该扩展名的默认动词就指向了一个不存在的 verb，双击会变成没反应。
+            foreach (var n in names.Where(n =>
+                         n.StartsWith(KeyPrefix, StringComparison.OrdinalIgnoreCase)
+                         && !n.Equals(OpenVerbKey, StringComparison.OrdinalIgnoreCase)))
                 TryDelete($@"{shellPath}\{n}");
         }
         catch { /* 键不存在或无权限 */ }
@@ -446,6 +462,28 @@ public sealed class ContextMenuRegistrar
     /// <summary>备份值：该扩展名原本就没有默认 ProgID（不是"没备份"）。</summary>
     private const string NoProgId = "<none>";
 
+    /// <summary>
+    /// 「打开」verb 的键名 —— 双击压缩包时进的应该是主界面，不是就地解压。
+    ///
+    /// 【为什么必须自己造一个 open】Windows 挑默认动词的规则是：
+    ///   ① 先看 <c>ProgID\shell</c> 的默认值；② 没人指定时，取合并后动词列表的第一个。
+    /// 我们的解压 verb 挂在 <c>.ext\shell</c> 下（挂这里才能在「zzzip 不是默认程序」时
+    /// 也保持右键可用），而 ProgID 的 shell 默认值原先没设，于是
+    /// <c>zzzip.here</c>（字母序最前）被当成了默认动作 —— 用户双击压缩包会被直接就地解压，
+    /// 这在桌面上一堆文件的场景下是有数据风险的。补上这个 open verb 并显式认领默认动词，
+    /// 双击才会变成「打开」。
+    ///
+    /// 它属于「文件关联」而不是「右键菜单」，所以不随菜单开关一起清理
+    /// （见 <see cref="DeleteVerbSubKeys"/> 的排除规则），由 Associate / Dissociate 单独管理。
+    /// </summary>
+    private const string OpenVerbKey = "zzzip.open";
+
+    /// <summary>「打开」verb 的菜单文字。键名带前缀就不在系统内置动词表里，必须自己给文字。</summary>
+    private const string OpenVerbLabel = "打开";
+
+    /// <summary>备份值：该扩展名原本没有指定默认动词。</summary>
+    private const string NoShellVerb = "<none>";
+
     /// <summary>该扩展名当前是否已关联到 zzzip。</summary>
     public static bool IsAssociated(string extension)
     {
@@ -521,6 +559,201 @@ public sealed class ContextMenuRegistrar
         });
     }
 
+    // ---------------------------------------------------------------- 默认动词与图标
+    //
+    // 这两项都写「扩展名键本身」（.ext\shell 的默认值、.ext\DefaultIcon），
+    // 因为 Win10/11 在 FileExts\.ext\UserChoice 缺失时并不总会采用我们写在 Classes 里的
+    // ProgID —— 实测双击命令与文件图标都取自扩展名键这一层。两者都按同样的
+    // 「先备份、只在没被人占用时才写、卸载可还原」模式处理。
+
+    /// <summary>默认动词 / 图标的备份记录名（与 ProgID 备份共用同一个键，用后缀区分）。</summary>
+    private static string ShellVerbBackupName(string ext) => ext + "|verb";
+    private static string IconBackupName(string ext) => ext + "|icon";
+
+    private static string? ReadBackup(string name)
+    {
+        try
+        {
+            using var bk = Registry.CurrentUser.OpenSubKey(BackupKey);
+            return bk?.GetValue(name) as string;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>丢弃备份键下的一条记录（只清记录，不动注册表里的实际现状）。</summary>
+    private static void DropValue(string name)
+    {
+        TryWrite(() =>
+        {
+            using var bk = Registry.CurrentUser.OpenSubKey(BackupKey, writable: true);
+            bk?.DeleteValue(name, throwOnMissingValue: false);
+        });
+    }
+
+    /// <summary>该扩展名 shell 键上当前的默认动词（空串 = 未指定）。</summary>
+    private static string ReadShellDefaultVerb(string ext)
+    {
+        try
+        {
+            using var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\.{ext}\shell");
+            return k?.GetValue(null) as string ?? string.Empty;
+        }
+        catch { return string.Empty; }
+    }
+
+    /// <summary>
+    /// 写「打开」verb。命令刻意不带 <c>--verb=</c>：资源管理器传进来一个裸路径，
+    /// 主窗口直接打开并浏览这个压缩包（与 ProgID 的 open 命令完全一致）。
+    /// </summary>
+    private static void WriteOpenVerb(string ext, string exePath)
+    {
+        TryWrite(() =>
+        {
+            using var k = Registry.CurrentUser.CreateSubKey($@"{ClassesRoot}\.{ext}\shell\{OpenVerbKey}");
+            if (k is null) return;
+            k.SetValue(null, OpenVerbLabel);
+            k.SetValue("Icon", $"\"{exePath}\",0");
+            using var cmd = k.CreateSubKey("command");
+            cmd?.SetValue(null, $"\"{exePath}\" \"%1\"");
+        });
+    }
+
+    /// <summary>
+    /// 把「打开」指定为该扩展名的默认动词 —— 也就是双击动作、右键菜单里的加粗项。
+    ///
+    /// 只在原本没有指定默认动词时才写入：如果别的压缩软件已经占了这个位置
+    /// （比如 7-Zip 把自己设成了默认动词），我们就不越权抢它。
+    /// </summary>
+    private static void ClaimDefaultVerb(string ext)
+    {
+        var existing = ReadShellDefaultVerb(ext);
+
+        // 已经被别人指定过默认动词：不抢，也别留下无用备份
+        if (existing.Length > 0 && !existing.Equals(OpenVerbKey, StringComparison.OrdinalIgnoreCase))
+        {
+            DropValue(ShellVerbBackupName(ext));
+            return;
+        }
+
+        TryWrite(() =>
+        {
+            // 备份只在「还没备份过」时写：反复勾选关联时，第二次不能把
+            // 我们刚写进去的 zzzip.open 当成"用户原来的默认动词"存起来。
+            using var bk = Registry.CurrentUser.CreateSubKey(BackupKey);
+            if (bk?.GetValue(ShellVerbBackupName(ext)) is null)
+                bk?.SetValue(ShellVerbBackupName(ext),
+                             existing.Length == 0 ? NoShellVerb : existing);
+
+            using var k = Registry.CurrentUser.CreateSubKey($@"{ClassesRoot}\.{ext}\shell");
+            k?.SetValue(null, OpenVerbKey);
+        });
+    }
+
+    /// <summary>还原默认动词，并删掉我们的「打开」verb（幂等，可反复调用）。</summary>
+    private static void ReleaseDefaultVerb(string ext)
+    {
+        var backup = ReadBackup(ShellVerbBackupName(ext));
+        TryWrite(() =>
+        {
+            using var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\.{ext}\shell", writable: true);
+            if (k is not null
+                && string.Equals(k.GetValue(null) as string, OpenVerbKey, StringComparison.OrdinalIgnoreCase))
+            {
+                if (backup is null || backup == NoShellVerb)
+                    k.DeleteValue(string.Empty, throwOnMissingValue: false);
+                else
+                    k.SetValue(null, backup);
+            }
+        });
+
+        TryDelete($@"{ClassesRoot}\.{ext}\shell\{OpenVerbKey}");
+        DropValue(ShellVerbBackupName(ext));
+        RemoveEmptyShellKey(ext);
+    }
+
+    /// <summary>
+    /// 顺手清掉已经空掉的 <c>.ext\shell</c> 键（绿色承诺：卸载不留残留）。
+    /// 只剩空壳键虽然无害，但用户拿注册表编辑器一看会以为没卸干净。
+    /// </summary>
+    private static void RemoveEmptyShellKey(string ext)
+    {
+        var path = $@"{ClassesRoot}\.{ext}\shell";
+        try
+        {
+            using (var k = Registry.CurrentUser.OpenSubKey(path))
+            {
+                if (k is null) return;
+                if (k.GetSubKeyNames().Length > 0 || k.GetValueNames().Length > 0) return;
+            }
+            Registry.CurrentUser.DeleteSubKey(path, throwOnMissingSubKey: false);
+        }
+        catch { /* 键不存在或被占用，无需处理 */ }
+    }
+
+    /// <summary>
+    /// 给扩展名键本身写 zzzip 图标。系统取图标的顺序是 <c>.ext\DefaultIcon</c> 先于
+    /// ProgID 的 DefaultIcon，而资源管理器不总会采用我们写的 ProgID（见本节开头说明），
+    /// 结果就是「关联看着成功了、图标还是系统那张空白文档」。写在这里才稳定生效。
+    ///
+    /// 同样不抢别人的：已经被别的程序指定过图标就原样不动。
+    /// </summary>
+    private static void ClaimExtensionIcon(string ext, string exePath)
+    {
+        var ourIcon = $"\"{exePath}\",0";
+        TryWrite(() =>
+        {
+            using var k = Registry.CurrentUser.CreateSubKey($@"{ClassesRoot}\.{ext}");
+            using var icon = k?.CreateSubKey("DefaultIcon");
+            if (icon is null) return;
+
+            var existing = icon.GetValue(null) as string ?? string.Empty;
+            var weWroteIt = ReadBackup(IconBackupName(ext)) is not null;
+
+            // 不是我们写的、而且已经有值 —— 那是别人的图标，不覆盖
+            if (!weWroteIt && existing.Length > 0) return;
+
+            using var bk = Registry.CurrentUser.CreateSubKey(BackupKey);
+            if (bk?.GetValue(IconBackupName(ext)) is null)
+                bk?.SetValue(IconBackupName(ext), existing.Length == 0 ? NoShellVerb : existing);
+
+            icon.SetValue(null, ourIcon);
+        });
+    }
+
+    /// <summary>还原扩展名图标（只在我们确实写过时才动，幂等）。</summary>
+    private static void ReleaseExtensionIcon(string ext)
+    {
+        var backup = ReadBackup(IconBackupName(ext));
+        if (backup is null) return;      // 没写过，就绝不碰用户/别人的设置
+
+        TryWrite(() =>
+        {
+            using var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\.{ext}", writable: true);
+            using var icon = k?.OpenSubKey("DefaultIcon", writable: true);
+            if (icon is null) return;
+            if (backup == NoShellVerb)
+                icon.DeleteValue(string.Empty, throwOnMissingValue: false);
+            else
+                icon.SetValue(null, backup);
+        });
+
+        // 连空壳 DefaultIcon 一起收走
+        try
+        {
+            using (var k = Registry.CurrentUser.OpenSubKey($@"{ClassesRoot}\.{ext}\DefaultIcon"))
+            {
+                if (k is not null && k.GetValueNames().Length == 0 && k.GetSubKeyNames().Length == 0)
+                {
+                    k.Close();
+                    Registry.CurrentUser.DeleteSubKey($@"{ClassesRoot}\.{ext}\DefaultIcon", throwOnMissingSubKey: false);
+                }
+            }
+        }
+        catch { }
+
+        DropValue(IconBackupName(ext));
+    }
+
     /// <summary>
     /// 把指定扩展名的默认打开程序设为 zzzip。
     ///
@@ -539,6 +772,9 @@ public sealed class ContextMenuRegistrar
         foreach (var ext in extensions.Select(e => e.TrimStart('.')))
         {
             WriteProgId(ext, exe);
+            WriteOpenVerb(ext, exe);             // 双击的默认动作：打开界面，而不是就地解压
+            ClaimDefaultVerb(ext);               // 加粗项 / 双击落在这个「打开」上
+            ClaimExtensionIcon(ext, exe);        // 让资源管理器真的显示 zzzip 图标
             BackupDefault(ext);                  // 必须先备份，后覆盖默认值
 
             TryWrite(() =>
@@ -559,6 +795,11 @@ public sealed class ContextMenuRegistrar
     {
         foreach (var ext in extensions.Select(e => e.TrimStart('.')))
         {
+            // 这两个都自带幂等保护：不是我们写进去的就不碰，
+            // 所以即便用户中途自己改过默认程序，也不会被这里误伤。
+            ReleaseDefaultVerb(ext);
+            ReleaseExtensionIcon(ext);
+
             if (IsAssociated(ext))
             {
                 RestoreDefault(ext);
