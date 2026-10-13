@@ -50,7 +50,7 @@ dotnet build zzzip.slnx -c Release
 # 打发布包（自包含单文件 + 7-Zip 引擎 + 说明；同时产出可分发的 zip）
 bash scripts/publish.sh
 #   → artifacts/zzzip-win-x64/                 解压即用的绿色目录
-#   → artifacts/zzzip-1.0.1-win-x64.zip        可直接分发的压缩包
+#   → artifacts/zzzip-1.0.2-win-x64.zip        可直接分发的压缩包
 
 # 运行自动测试（退出码 = 失败数，0 表示全部通过）
 src/zzzip.SelfTest/bin/Release/net10.0-windows/zzzip.SelfTest.exe \
