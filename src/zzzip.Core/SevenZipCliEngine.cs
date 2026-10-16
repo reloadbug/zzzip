@@ -137,13 +137,18 @@ public sealed class SevenZipCliEngine : IArchiveEngine
         if (!string.IsNullOrEmpty(options.Password)) args.Add("-p" + options.Password);
         args.Add(options.OverwriteExisting ? "-aoa" : "-aos");
 
-        // 只解压被选中的条目：目录整体追加；文件仅在“部分选择”时按包内路径逐个追加
-        foreach (var e in wanted)
-        {
-            if (e.IsDirectory) args.Add(e.RawName);
-            else if (wanted.Count < all.Count) args.Add(e.RawName);
-        }
+        // 7z 的语法是：7z x [开关…] <归档名> [条目名…] —— 归档名必须排在条目名之前。
+        // 顺序反了的话，7z 会把第一个条目名当作归档名去找，报「系统找不到指定的文件」
+        // 并返回 2。包内带目录条目时必现（例如 ~modsdd/BlueprintLoader/x.pak），
+        // 表现为「解压到当前文件夹」直接失败。
         args.Add(archivePath);
+
+        // 全部解压时不传任何条目名 —— 7z 默认就是全解，多传只会被包内名字的写法差异坑到。
+        // 只有「部分选择」时才逐个指定，避免动到用户没勾的条目。
+        if (entryPredicate is not null && wanted.Count < all.Count)
+        {
+            foreach (var e in wanted) args.Add(e.RawName);
+        }
 
         var code = Run(args, MakeProgressLineHandler(progress, total), out var err, ct);
         if (code != 0) throw new InvalidDataException(ErrorMessage(err, archivePath));
@@ -380,12 +385,57 @@ public sealed class SevenZipCliEngine : IArchiveEngine
         return proc.ExitCode;
     }
 
+    /// <summary>
+    /// 把 7z 的 stderr 整理成能照着做的提示。
+    ///
+    /// 7z 的错误文本有两种形态：
+    ///   ERROR: Cannot delete output file : 另一个程序正在使用此文件，进程无法访问。 : D:\...\a.pak
+    ///   ERROR: D:\...\a.pak
+    ///   Cannot create file : Access is denied.
+    /// 只取第一行会把真正的原因（第 2 行起）丢掉 —— 用户看到的就只有「处理失败：ERROR: 某文件」，
+    /// 既不知道出了什么事，也不知道该怎么办。所以这里保留全部行，并对常见原因给中文说明。
+    /// </summary>
     private static string ErrorMessage(string stderr, string archivePath)
     {
-        var detail = stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                           .Select(s => s.Trim())
-                           .FirstOrDefault(s => !s.StartsWith("7-Zip", StringComparison.OrdinalIgnoreCase));
-        var reason = detail ?? "未知错误";
-        return $"{Path.GetFileName(archivePath)} 处理失败：{reason}";
+        var lines = stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                          .Select(s => s.Trim())
+                          .Where(s => s.Length > 0
+                                      && !s.StartsWith("7-Zip", StringComparison.OrdinalIgnoreCase))
+                          .ToList();
+
+        var head = $"{Path.GetFileName(archivePath)} 处理失败";
+        if (lines.Count == 0) return head + "：未知错误（7-Zip 没有返回错误详情）";
+
+        var raw = string.Join(" ", lines);
+        return Explain(raw) is { } hint ? $"{head}：{hint}" : $"{head}：{raw}";
+    }
+
+    /// <summary>
+    /// 把 7z 的英文/系统错误翻成可操作的中文建议；认不出来时返回 null，
+    /// 让调用方把 7z 的原文完整透出去（宁可啰嗦，也别把线索藏起来）。
+    /// </summary>
+    private static string? Explain(string raw)
+    {
+        bool Has(params string[] keys) =>
+            keys.Any(k => raw.Contains(k, StringComparison.OrdinalIgnoreCase));
+
+        if (Has("Cannot delete output file", "正在使用此文件", "being used by another process"))
+            return "目标文件正被其他程序占用，请关闭正在使用它的程序（例如游戏、编辑器）后重试，"
+                 + "或勾选「覆盖已存在的文件」。";
+        if (Has("Access is denied", "拒绝访问"))
+            return "目标目录没有写入权限。请确认该目录可写，或改用「解压到指定文件夹」换个位置。";
+        if (Has("too long", "路径过长"))
+            return "路径过长，请把压缩包解压到层级更浅的目录。";
+        if (Has("not enough space", "磁盘空间"))
+            return "磁盘空间不足。";
+        if (Has("CRC", "Data Error", "数据错误"))
+            return "数据校验失败，压缩包可能已损坏或没有下载完整。";
+        if (Has("Wrong password", "密码错误", "Cannot open encrypted"))
+            return "密码错误，或该压缩包已加密。";
+        if (Has("Cannot open file as archive"))
+            return "这不是有效的压缩包，或文件已经损坏。";
+        if (Has("Cannot create file", "Cannot open output file"))
+            return "无法创建输出文件，请确认目标目录可写，或该处没有同名的只读文件。";
+        return null;
     }
 }

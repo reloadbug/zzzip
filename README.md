@@ -16,11 +16,11 @@
 | AES-256 加密 · 固实压缩 · 分卷 · 自解压 EXE · 注释 | 已完成 |
 | 资源管理器右键菜单（含层叠模式） | 已完成 |
 | 文件关联管理（接管式，可逆：默认程序、默认动词、图标逐项还原） | 已完成 |
-| 自动测试（47 项，库级 + 端到端） | 已完成 |
-| 自包含单文件打包与发布（v1.0.2） | 已完成 |
+| 自动测试（50 项，库级 + 端到端） | 已完成 |
+| 自包含单文件打包与发布（v1.0.3） | 已完成 |
 
-**下载**：[Releases · v1.0.2](https://github.com/reloadbug/zzzip/releases/tag/v1.0.2)
-→ `zzzip-1.0.2-win-x64.zip`（54 MB，解压即用，目标机无需安装 .NET 运行时）
+**下载**：[Releases · v1.0.3](https://github.com/reloadbug/zzzip/releases/tag/v1.0.3)
+→ `zzzip-1.0.3-win-x64.zip`（54 MB，解压即用，目标机无需安装 .NET 运行时）
 
 ---
 
@@ -50,7 +50,7 @@ dotnet build zzzip.slnx -c Release
 # 打发布包（自包含单文件 + 7-Zip 引擎 + 说明；同时产出可分发的 zip）
 bash scripts/publish.sh
 #   → artifacts/zzzip-win-x64/                 解压即用的绿色目录
-#   → artifacts/zzzip-1.0.2-win-x64.zip        可直接分发的压缩包
+#   → artifacts/zzzip-1.0.3-win-x64.zip        可直接分发的压缩包
 
 # 运行自动测试（退出码 = 失败数，0 表示全部通过）
 src/zzzip.SelfTest/bin/Release/net10.0-windows/zzzip.SelfTest.exe \

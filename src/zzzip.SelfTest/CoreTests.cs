@@ -449,6 +449,90 @@ public static class CoreTests
                 "完好压缩包应通过完整性测试");
         });
 
+        t.Run("7-Zip 内核：含目录条目的包能整包解压（回归：条目名不得排在归档名之前）", () =>
+        {
+            if (!has7z) TestHarness.Skip("本机未找到 7z.exe");
+            var dir = Path.Combine(workDir, "7z-dir-entries");
+            Directory.CreateDirectory(dir);
+
+            // 7z 压缩目录时会写入目录条目，正是触发该缺陷的形态
+            var src = Path.Combine(dir, "~modsdd", "BlueprintLoader");
+            Directory.CreateDirectory(src);
+            File.WriteAllText(Path.Combine(src, "BlueprintLoader_P.pak"), "payload");
+
+            var zip = Path.Combine(dir, "pkg.zip");
+            ArchiveEngineRouter.Create([Path.Combine(dir, "~modsdd")], zip,
+                new ArchiveOptions { Format = FormatRegistry.Zip }, null, CancellationToken.None);
+
+            var dest = Path.Combine(dir, "out");
+            Directory.CreateDirectory(dest);
+            ArchiveEngineRouter.Extract(zip, dest, new ArchiveOptions(), null, null, CancellationToken.None);
+
+            var got = Path.Combine(dest, "~modsdd", "BlueprintLoader", "BlueprintLoader_P.pak");
+            TestHarness.True(File.Exists(got), "含目录条目的包应能整包解压");
+            TestHarness.Equal("payload", File.ReadAllText(got));
+        });
+
+        t.Run("7-Zip 内核：部分解压只解出勾选的条目", () =>
+        {
+            if (!has7z) TestHarness.Skip("本机未找到 7z.exe");
+            var dir = Path.Combine(workDir, "7z-partial");
+            Directory.CreateDirectory(dir);
+
+            var src = Path.Combine(dir, "src");
+            Directory.CreateDirectory(src);
+            File.WriteAllText(Path.Combine(src, "keep.txt"), "keep");
+            File.WriteAllText(Path.Combine(src, "drop.txt"), "drop");
+
+            var zip = Path.Combine(dir, "p.zip");
+            ArchiveEngineRouter.Create([Path.Combine(src, "keep.txt"), Path.Combine(src, "drop.txt")],
+                zip, new ArchiveOptions { Format = FormatRegistry.Zip }, null, CancellationToken.None);
+
+            var dest = Path.Combine(dir, "out");
+            Directory.CreateDirectory(dest);
+            ArchiveEngineRouter.Extract(zip, dest, new ArchiveOptions { OverwriteExisting = true },
+                e => e.Path.EndsWith("keep.txt", StringComparison.OrdinalIgnoreCase),
+                null, CancellationToken.None);
+
+            TestHarness.True(File.Exists(Path.Combine(dest, "keep.txt")), "勾选的条目应被解出");
+            TestHarness.False(File.Exists(Path.Combine(dest, "drop.txt")), "没勾的条目不应被解出");
+        });
+
+        t.Run("7-Zip 内核：目标文件被占用时报出可操作的中文提示", () =>
+        {
+            if (!has7z) TestHarness.Skip("本机未找到 7z.exe");
+            var dir = Path.Combine(workDir, "7z-locked");
+            Directory.CreateDirectory(dir);
+
+            // 造一个内含 ~modsdd\BlueprintLoader\BlueprintLoader_P.pak 的包（复刻实测遇到的场景）
+            var srcRoot = Path.Combine(dir, "src");
+            var srcDir = Path.Combine(srcRoot, "~modsdd", "BlueprintLoader");
+            Directory.CreateDirectory(srcDir);
+            File.WriteAllText(Path.Combine(srcDir, "BlueprintLoader_P.pak"), "payload");
+
+            var zip = Path.Combine(dir, "~modsdd.zip");
+            ArchiveEngineRouter.Create([Path.Combine(srcRoot, "~modsdd")], zip,
+                new ArchiveOptions { Format = FormatRegistry.Zip }, null, CancellationToken.None);
+
+            // 先正常解压一次，让目标文件就位
+            ArchiveEngineRouter.Extract(zip, dir, new ArchiveOptions { OverwriteExisting = true },
+                null, null, CancellationToken.None);
+            var target = Path.Combine(dir, "~modsdd", "BlueprintLoader", "BlueprintLoader_P.pak");
+            TestHarness.True(File.Exists(target), "首次解压应产生目标文件");
+
+            // 独占占用目标文件，再以覆盖模式解压 —— 7z 必然失败
+            using (var hold = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                var ex = TestHarness.Throws<Exception>(() => ArchiveEngineRouter.Extract(
+                    zip, dir, new ArchiveOptions { OverwriteExisting = true },
+                    null, null, CancellationToken.None));
+
+                // 关键：真正的原因（7z 的第 2 行起）不能被丢掉，否则用户只看到一串文件名
+                TestHarness.Contains(ex.Message, "处理失败");
+                TestHarness.Contains(ex.Message, "占用");
+            }
+        });
+
         t.Run("大文件流式压缩：10MB 随机数据往返无损坏", () =>
         {
             if (!has7z) TestHarness.Skip("本机未找到 7z.exe");
