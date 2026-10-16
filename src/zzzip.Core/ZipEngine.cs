@@ -41,11 +41,26 @@ public sealed class ZipEngine : IArchiveEngine
 
     public void Extract(string archivePath, string destinationDir, ArchiveOptions options,
                         Func<ArchiveEntry, bool>? entryPredicate,
-                        IProgress<ArchiveProgress>? progress, CancellationToken ct)
+                        IProgress<ArchiveProgress>? progress, CancellationToken ct,
+                        IConflictResolver? conflicts = null)
     {
         using var zip = OpenRead(archivePath);
         var root = PathSafety.NormalizeRoot(destinationDir);
         var entries = zip.Entries.Where(e => !string.IsNullOrEmpty(e.Name)).ToList();
+
+        // 先把同名文件一次性问清楚，再动手解压 —— 与 7z 内核走同一套流程，
+        // 免得两个内核在「冲突怎么办」这件事上悄悄跑偏。
+        var listings = entries.Select(e => new ArchiveEntry
+        {
+            Path = e.FullName.Replace('/', '\\').TrimEnd('\\'),
+            RawName = e.FullName,
+            Size = e.Length,
+        }).ToList();
+
+        var hits = ConflictScanner.Find(listings, destinationDir, entryPredicate);
+        var gate = new ConflictGate(options, conflicts);
+        var decisions = new Dictionary<string, ConflictDecision>(StringComparer.Ordinal);
+        foreach (var hit in hits) decisions[hit.Entry.RawName] = gate.Decide(hit);
 
         long total = entries.Sum(e => e.Length);
         long done = 0;
@@ -64,11 +79,38 @@ public sealed class ZipEngine : IArchiveEngine
             if (entryPredicate is not null && !entryPredicate(probe)) continue;
 
             var target = PathSafety.ResolveEntryPath(root, e);
+            var overwrite = options.OverwriteExisting;
+
+            if (File.Exists(target))
+            {
+                if (decisions.TryGetValue(e.FullName, out var decision))
+                {
+                    switch (decision)
+                    {
+                        case ConflictDecision.Skip:
+                            continue;
+                        case ConflictDecision.Rename:
+                            target = UniqueName.For(target);
+                            overwrite = false;
+                            break;
+                        default:                      // Overwrite
+                            overwrite = true;
+                            break;
+                    }
+                }
+                else if (!overwrite)
+                {
+                    continue;                     // 没问到（无询问通道）且不覆盖：保持旧行为
+                }
+            }
+            else
+            {
+                overwrite = false;                // 目标不存在，不需要覆盖语义
+            }
+
             var dir = Path.GetDirectoryName(target);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            if (File.Exists(target) && !options.OverwriteExisting) continue;
-
-            e.ExtractToFile(target, overwrite: options.OverwriteExisting);
+            e.ExtractToFile(target, overwrite);
 
             done += e.Length;
             filesDone++;

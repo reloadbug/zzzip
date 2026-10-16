@@ -18,9 +18,15 @@ public interface IArchiveEngine
 
     /// <summary>把包内条目解压到目标目录。</summary>
     /// <param name="entryPredicate">返回 true 的条目才被解压；null 表示全部。</param>
+    /// <param name="conflicts">
+    /// 目标目录已存在同名文件时的询问通道。null 表示不询问，按
+    /// <see cref="ArchiveOptions.OverwriteExisting"/> 静默处理（右键后台解压与自动化测试走这条路）。
+    /// 传了它就一定整包先扫一遍冲突、再动手解压。
+    /// </param>
     void Extract(string archivePath, string destinationDir, ArchiveOptions options,
                  Func<ArchiveEntry, bool>? entryPredicate,
-                 IProgress<ArchiveProgress>? progress, CancellationToken ct);
+                 IProgress<ArchiveProgress>? progress, CancellationToken ct,
+                 IConflictResolver? conflicts = null);
 
     /// <summary>创建压缩包。</summary>
     void Create(IEnumerable<string> inputPaths, string outputArchivePath, ArchiveOptions options,

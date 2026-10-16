@@ -13,7 +13,7 @@
     <ApplicationIcon>Assets\zzzip.ico</ApplicationIcon>
     <AssemblyTitle>zzzip</AssemblyTitle>
     <Product>zzzip 极简绿色压缩工具</Product>
-    <Version>1.0.3</Version>
+    <Version>1.0.4</Version>
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
   </PropertyGroup>
   <ItemGroup>

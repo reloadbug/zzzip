@@ -124,18 +124,124 @@ public sealed class SevenZipCliEngine : IArchiveEngine
 
     public void Extract(string archivePath, string destinationDir, ArchiveOptions options,
                         Func<ArchiveEntry, bool>? entryPredicate,
-                        IProgress<ArchiveProgress>? progress, CancellationToken ct)
+                        IProgress<ArchiveProgress>? progress, CancellationToken ct,
+                        IConflictResolver? conflicts = null)
     {
         if (!File.Exists(archivePath)) throw new FileNotFoundException("压缩包不存在", archivePath);
         Directory.CreateDirectory(destinationDir);
 
         var all = ListInternal(archivePath, options.Password);
         var wanted = entryPredicate is null ? all : all.Where(entryPredicate).ToList();
+        var partial = entryPredicate is not null && wanted.Count < all.Count;
         long total = wanted.Where(e => !e.IsDirectory).Sum(e => e.Size);
 
-        var args = new List<string> { "x", "-y", "-sccUTF-8", "-bsp1", "-o" + destinationDir };
+        // ---- 1. 同名文件预检 ------------------------------------------------
+        // 7z 一次调用解一整包，中途没法插进去问用户，所以只能先把冲突全找出来、
+        // 一次问清楚，再按「覆盖 / 跳过 / 改名」把条目分组，分几趟执行。
+        var hits = ConflictScanner.Find(wanted, destinationDir, null);
+        var gate = new ConflictGate(options, conflicts);
+        var decisions = new Dictionary<string, ConflictDecision>(StringComparer.Ordinal);
+        foreach (var hit in hits) decisions[hit.Entry.RawName] = gate.Decide(hit);
+
+        var toOverwrite = new List<string>();
+        var toRename = new List<FileConflict>();
+        foreach (var hit in hits)
+        {
+            switch (decisions[hit.Entry.RawName])
+            {
+                case ConflictDecision.Overwrite: toOverwrite.Add(hit.Entry.RawName); break;
+                case ConflictDecision.Rename: toRename.Add(hit); break;
+            }
+        }
+
+        // ---- 2. 第一趟：把不冲突的部分解出来 ---------------------------------
+        // 有冲突时用 -aos：盘上已存在的文件会被整体跳过，正好把随后要单独处理的那批留下。
+        // 没有冲突时沿用选项里的策略，与 1.0.3 以前的行为完全一致。
+        var baseMode = hits.Count == 0 && options.OverwriteExisting ? "-aoa" : "-aos";
+        var fileCount = wanted.Count(e => !e.IsDirectory);
+        var everythingConflicts = hits.Count > 0 && hits.Count == fileCount;
+
+        if (!everythingConflicts)
+        {
+            var names = partial ? wanted.Select(e => e.RawName).ToList() : null;
+            ExtractInBatches(archivePath, destinationDir, options, names, baseMode, progress, total, ct);
+        }
+
+        // ---- 3. 第二趟：用户选「覆盖」的那批，单独用 -aoa 覆盖写入 -----------
+        if (toOverwrite.Count > 0)
+            ExtractInBatches(archivePath, destinationDir, options, toOverwrite, "-aoa", null, 0, ct);
+
+        // ---- 4. 第三趟：用户选「重命名」的那批 -------------------------------
+        if (toRename.Count > 0)
+            RenameConflicts(archivePath, destinationDir, options, toRename, ct);
+
+        if (!options.KeepArchiveAfterExtract)
+        {
+            try { File.Delete(archivePath); } catch { /* 删除失败不阻断 */ }
+        }
+    }
+
+    /// <summary>
+    /// 用户选了「重命名」的那批：7z 没法「解压成另一个名字」，所以先原样解到一个临时目录，
+    /// 再搬到 <c>name (1).ext</c>。临时目录放在目标目录内部 —— 必须同卷，
+    /// 跨卷的 File.Move 会直接失败。
+    /// </summary>
+    private void RenameConflicts(string archivePath, string destinationDir, ArchiveOptions options,
+                                 IReadOnlyList<FileConflict> hits, CancellationToken ct)
+    {
+        var staging = Path.Combine(destinationDir, ".zzzip-tmp-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(staging);
+        try
+        {
+            ExtractInBatches(archivePath, staging, options,
+                             hits.Select(h => h.Entry.RawName).ToList(), "-aoa", null, 0, ct);
+
+            foreach (var hit in hits)
+            {
+                var source = Path.Combine(staging, hit.Entry.Path);
+                if (!File.Exists(source)) continue;
+
+                var target = UniqueName.For(hit.TargetPath);
+                var dir = Path.GetDirectoryName(target);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                File.Move(source, target);
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(staging, true); } catch { /* 清理失败不影响解压结果 */ }
+        }
+    }
+
+    /// <summary>按批调 7z。条目名太多时会撞上命令行长度上限，所以切开跑。</summary>
+    private void ExtractInBatches(string archivePath, string outDir, ArchiveOptions options,
+                                  IReadOnlyList<string>? entryNames, string mode,
+                                  IProgress<ArchiveProgress>? progress, long total, CancellationToken ct)
+    {
+        // names 为 null = 整包解压，此时按铁律不传任何条目名
+        if (entryNames is null)
+        {
+            ExtractPass(archivePath, outDir, options, null, mode, progress, total, ct);
+            return;
+        }
+
+        var batches = Batch(entryNames).ToList();
+        for (var i = 0; i < batches.Count; i++)
+        {
+            // 只有一批时才把进度接出去：多批时百分比会一次次归零，反而像卡住了
+            ExtractPass(archivePath, outDir, options, batches[i], mode,
+                        batches.Count == 1 ? progress : null, total, ct);
+        }
+    }
+
+    /// <summary>调一次 <c>7z x</c>。</summary>
+    private void ExtractPass(string archivePath, string outDir, ArchiveOptions options,
+                             IReadOnlyList<string>? entryNames, string mode,
+                             IProgress<ArchiveProgress>? progress, long total, CancellationToken ct)
+    {
+        var args = new List<string> { "x", "-y", "-sccUTF-8", "-bsp1", "-o" + outDir };
         if (!string.IsNullOrEmpty(options.Password)) args.Add("-p" + options.Password);
-        args.Add(options.OverwriteExisting ? "-aoa" : "-aos");
+        args.Add(mode);
 
         // 7z 的语法是：7z x [开关…] <归档名> [条目名…] —— 归档名必须排在条目名之前。
         // 顺序反了的话，7z 会把第一个条目名当作归档名去找，报「系统找不到指定的文件」
@@ -145,18 +251,31 @@ public sealed class SevenZipCliEngine : IArchiveEngine
 
         // 全部解压时不传任何条目名 —— 7z 默认就是全解，多传只会被包内名字的写法差异坑到。
         // 只有「部分选择」时才逐个指定，避免动到用户没勾的条目。
-        if (entryPredicate is not null && wanted.Count < all.Count)
-        {
-            foreach (var e in wanted) args.Add(e.RawName);
-        }
+        if (entryNames is not null) args.AddRange(entryNames);
 
         var code = Run(args, MakeProgressLineHandler(progress, total), out var err, ct);
         if (code != 0) throw new InvalidDataException(ErrorMessage(err, archivePath));
+    }
 
-        if (!options.KeepArchiveAfterExtract)
+    /// <summary>把条目名切成若干批，避开命令行长度上限（Windows 是 32767 字符，这里留足余量）。</summary>
+    private static IEnumerable<List<string>> Batch(IReadOnlyList<string> names, int maxChars = 8000)
+    {
+        var current = new List<string>();
+        var length = 0;
+
+        foreach (var name in names)
         {
-            try { File.Delete(archivePath); } catch { /* 删除失败不阻断 */ }
+            if (current.Count > 0 && length + name.Length + 1 > maxChars)
+            {
+                yield return current;
+                current = new List<string>();
+                length = 0;
+            }
+            current.Add(name);
+            length += name.Length + 1;
         }
+
+        if (current.Count > 0) yield return current;
     }
 
     public void Create(IEnumerable<string> inputPaths, string outputArchivePath, ArchiveOptions options,

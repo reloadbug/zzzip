@@ -64,12 +64,13 @@ public static class ArchiveEngineRouter
 
     public static void Extract(string archivePath, string destinationDir, ArchiveOptions options,
                                Func<ArchiveEntry, bool>? entryPredicate,
-                               IProgress<ArchiveProgress>? progress, CancellationToken ct)
+                               IProgress<ArchiveProgress>? progress, CancellationToken ct,
+                               IConflictResolver? conflicts = null)
     {
         var engine = ForExtract(archivePath);
         if (!string.IsNullOrEmpty(options.Password) && !engine.SupportsEncryption)
             throw new NotSupportedException("当前仅内置 ZIP 内核，无法解压加密包。");
-        engine.Extract(archivePath, destinationDir, options, entryPredicate, progress, ct);
+        engine.Extract(archivePath, destinationDir, options, entryPredicate, progress, ct, conflicts);
     }
 
     public static void Create(IEnumerable<string> inputPaths, string outputPath, ArchiveOptions options,
@@ -83,27 +84,34 @@ public static class ArchiveEngineRouter
     // ---- 右键菜单语义化动作（与 360 菜单项一一对应） ----
 
     /// <summary>解压到“压缩包名\”同名文件夹（360 默认右键项）。</summary>
-    public static void ExtractToOwnFolder(string archivePath, IProgress<ArchiveProgress>? progress, CancellationToken ct)
+    /// <param name="conflicts">同名文件询问通道；传了就逐个问，null 则按选项静默处理。</param>
+    public static void ExtractToOwnFolder(string archivePath, IProgress<ArchiveProgress>? progress, CancellationToken ct,
+                                          IConflictResolver? conflicts = null)
     {
         var parent = Path.GetDirectoryName(Path.GetFullPath(archivePath)) ?? "";
         var target = Path.Combine(parent, Path.GetFileNameWithoutExtension(archivePath));
         Directory.CreateDirectory(target);
-        Extract(archivePath, target, new ArchiveOptions(), null, progress, ct);
+        Extract(archivePath, target, new ArchiveOptions(), null, progress, ct, conflicts);
     }
 
     /// <summary>解压到压缩包所在目录（360 的“解压到当前文件夹”）。</summary>
-    public static void ExtractToHere(string archivePath, IProgress<ArchiveProgress>? progress, CancellationToken ct)
+    /// <param name="conflicts">同名文件询问通道；传了就逐个问，null 则按选项静默处理。</param>
+    public static void ExtractToHere(string archivePath, IProgress<ArchiveProgress>? progress, CancellationToken ct,
+                                     IConflictResolver? conflicts = null)
     {
         var parent = Path.GetDirectoryName(Path.GetFullPath(archivePath)) ?? "";
-        Extract(archivePath, parent, new ArchiveOptions { ExtractToSubFolderPerArchive = false }, null, progress, ct);
+        Extract(archivePath, parent, new ArchiveOptions { ExtractToSubFolderPerArchive = false },
+                null, progress, ct, conflicts);
     }
 
     /// <summary>解压到指定目录（360 的“解压到指定文件夹…”）。</summary>
+    /// <param name="conflicts">同名文件询问通道；传了就逐个问，null 则按选项静默处理。</param>
     public static void ExtractToDirectory(string archivePath, string targetDir,
-                                          IProgress<ArchiveProgress>? progress, CancellationToken ct)
+                                          IProgress<ArchiveProgress>? progress, CancellationToken ct,
+                                          IConflictResolver? conflicts = null)
     {
         Directory.CreateDirectory(targetDir);
-        Extract(archivePath, targetDir, new ArchiveOptions(), null, progress, ct);
+        Extract(archivePath, targetDir, new ArchiveOptions(), null, progress, ct, conflicts);
     }
 
     /// <summary>压缩到所在目录输出 xxx.zip（360 的“添加到&quot;文件名.zip&quot;”）。</summary>

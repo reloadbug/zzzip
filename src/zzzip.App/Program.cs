@@ -50,6 +50,11 @@ public static class Program
                 ShellVerbRunner.Run(cmd);
                 return 0;
             }
+            catch (ExtractCancelledException)
+            {
+                // 用户在「同名文件」提示里点了取消：这是主动中止，不是失败，安静退出即可
+                return 0;
+            }
             catch (Exception ex)
             {
                 // 静默模式（自动化/计划任务）下绝不弹窗阻塞，只写 stderr 并返回非零退出码

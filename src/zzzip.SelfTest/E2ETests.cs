@@ -99,6 +99,33 @@ public static class E2ETests
             TestHarness.True(File.Exists(Path.Combine(dir, "here.txt")), "应解压到当前文件夹");
         });
 
+        t.Run("端到端：--silent 解压遇到同名文件不弹窗（守住「绝不阻塞」的承诺）", () =>
+        {
+            var dir = Path.Combine(workDir, "e2e-silent-conflict");
+            Directory.CreateDirectory(dir);
+            var src = Path.Combine(dir, "same.txt");
+            File.WriteAllText(src, "FROM-ARCHIVE", Encoding.UTF8);
+            var zip = Path.Combine(dir, "s.zip");
+            ArchiveEngineRouter.Create([src], zip, new ArchiveOptions { Format = FormatRegistry.Zip },
+                null, CancellationToken.None);
+            File.Delete(src);
+
+            // 第一次：干净目录，正常解出
+            var (c1, _, e1) = Run(exe, ["--verb=here", zip], dir);
+            TestHarness.Equal(0, c1, "首次解压退出码应为 0，stderr：" + e1);
+
+            // 第二次：目的地已有同名文件。静默模式必须自己走完 ——
+            // 一旦弹出询问对话框，无人值守环境就会挂在那里，
+            // Run 里的 120 秒超时会把这条用例直接判失败。
+            var target = Path.Combine(dir, "same.txt");
+            File.WriteAllText(target, "ON-DISK");
+
+            var (c2, _, e2) = Run(exe, ["--verb=here", zip], dir);
+            TestHarness.Equal(0, c2, "重复解压退出码应为 0（静默跳过），stderr：" + e2);
+            TestHarness.Equal("ON-DISK", File.ReadAllText(target),
+                "静默模式不覆盖：盘上文件应保持原样");
+        });
+
         t.Run("端到端：--verb=each 每个文件压成单独压缩包", () =>
         {
             var dir = Path.Combine(workDir, "e2e-each");

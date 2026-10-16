@@ -533,6 +533,152 @@ public static class CoreTests
             }
         });
 
+        // ---------------------------------------------------------------
+        // 同名文件冲突：覆盖 / 跳过 / 改名，以及「全部xx」与「取消」
+        // ---------------------------------------------------------------
+
+        t.Run("同名文件：预检给出正确的冲突总数与序号", () =>
+        {
+            var dir = Path.Combine(workDir, "conflict-scan");
+            Directory.CreateDirectory(dir);
+            var src = Path.Combine(dir, "src");
+            Directory.CreateDirectory(src);
+            File.WriteAllText(Path.Combine(src, "a.txt"), "A");
+            File.WriteAllText(Path.Combine(src, "b.txt"), "B");
+
+            var zip = Path.Combine(dir, "p.zip");
+            ArchiveEngineRouter.Create([Path.Combine(src, "a.txt"), Path.Combine(src, "b.txt")],
+                zip, new ArchiveOptions { Format = FormatRegistry.Zip }, null, CancellationToken.None);
+
+            var dest = Path.Combine(dir, "out");
+            Directory.CreateDirectory(dest);
+            File.WriteAllText(Path.Combine(dest, "a.txt"), "old-a");
+
+            var hits = ConflictScanner.Find(ArchiveEngineRouter.List(zip), dest, null);
+            TestHarness.Equal(1, hits.Count, "只有 a.txt 在盘上存在，应只报一处冲突");
+            TestHarness.Equal(1, hits[0].Index, "第一处冲突的序号应为 1");
+            TestHarness.Equal(1, hits[0].Total, "冲突总数应为 1");
+            TestHarness.Equal("a.txt", hits[0].EntryFileName);
+            TestHarness.Equal(5L, hits[0].ExistingSize, "应读出盘上文件的实际大小（old-a = 5 字节）");
+        });
+
+        t.Run("同名文件：ZIP 内核按决策逐条执行（覆盖 / 跳过 / 改名）", () =>
+        {
+            var resolver = new ScriptedResolver(
+                ConflictDecision.Overwrite, ConflictDecision.Skip, ConflictDecision.Rename);
+
+            RunDecisionScenario(new ZipEngine(), "zip", workDir, resolver);
+        });
+
+        t.Run("同名文件：7-Zip 内核按决策逐条执行（覆盖 / 跳过 / 改名）", () =>
+        {
+            if (!has7z) TestHarness.Skip("本机未找到 7z.exe");
+            var resolver = new ScriptedResolver(
+                ConflictDecision.Overwrite, ConflictDecision.Skip, ConflictDecision.Rename);
+
+            RunDecisionScenario(new SevenZipCliEngine(SevenZipCliEngine.LocateExecutable()!),
+                "7z", workDir, resolver);
+        });
+
+        t.Run("同名文件：选「全部覆盖」之后不再逐条询问", () =>
+        {
+            var dir = Path.Combine(workDir, "conflict-all");
+            var zip = MakeArchive(dir, ["a.txt", "b.txt", "c.txt"]);
+            var dest = Path.Combine(dir, "out");
+            Directory.CreateDirectory(dest);
+            foreach (var name in new[] { "a.txt", "b.txt", "c.txt" })
+                File.WriteAllText(Path.Combine(dest, name), "ON-DISK");
+
+            var resolver = new ScriptedResolver(ConflictDecision.OverwriteAll);
+            ArchiveEngineRouter.Extract(zip, dest, new ArchiveOptions(), null, null,
+                CancellationToken.None, resolver);
+
+            TestHarness.Equal(1, resolver.Asked.Count, "「全部覆盖」之后不应再询问");
+            foreach (var name in new[] { "a.txt", "b.txt", "c.txt" })
+                TestHarness.Equal("FROM-ARCHIVE", File.ReadAllText(Path.Combine(dest, name)),
+                    $"{name} 应被覆盖为包内版本");
+        });
+
+        t.Run("同名文件：选「取消」时一个文件都不解压", () =>
+        {
+            var resolver = new ScriptedResolver(ConflictDecision.Cancel);
+
+            var dir = Path.Combine(workDir, "conflict-cancel");
+            Directory.CreateDirectory(dir);
+            var src = Path.Combine(dir, "src");
+            Directory.CreateDirectory(src);
+            File.WriteAllText(Path.Combine(src, "a.txt"), "FROM-ARCHIVE");
+            File.WriteAllText(Path.Combine(src, "fresh.txt"), "FRESH");   // 盘上不存在，本来会解出来
+
+            var zip = Path.Combine(dir, "p.zip");
+            ArchiveEngineRouter.Create([Path.Combine(src, "a.txt"), Path.Combine(src, "fresh.txt")],
+                zip, new ArchiveOptions { Format = FormatRegistry.Zip }, null, CancellationToken.None);
+
+            var dest = Path.Combine(dir, "out");
+            Directory.CreateDirectory(dest);
+            File.WriteAllText(Path.Combine(dest, "a.txt"), "ON-DISK");
+
+            TestHarness.Throws<ExtractCancelledException>(() => ArchiveEngineRouter.Extract(
+                zip, dest, new ArchiveOptions(), null, null, CancellationToken.None, resolver));
+
+            // 关键：取消发生在动手之前，连不冲突的文件也不该被解出来
+            TestHarness.False(File.Exists(Path.Combine(dest, "fresh.txt")),
+                "取消后不应解出任何文件");
+            TestHarness.Equal("ON-DISK", File.ReadAllText(Path.Combine(dest, "a.txt")),
+                "取消后盘上文件应保持原样");
+        });
+
+        t.Run("同名文件：没有冲突时不会打扰用户", () =>
+        {
+            var dir = Path.Combine(workDir, "conflict-none");
+            Directory.CreateDirectory(dir);
+            var src = Path.Combine(dir, "src");
+            Directory.CreateDirectory(src);
+            File.WriteAllText(Path.Combine(src, "only.txt"), "ONLY");
+
+            var zip = Path.Combine(dir, "p.zip");
+            ArchiveEngineRouter.Create([Path.Combine(src, "only.txt")], zip,
+                new ArchiveOptions { Format = FormatRegistry.Zip }, null, CancellationToken.None);
+
+            var dest = Path.Combine(dir, "out");
+            Directory.CreateDirectory(dest);
+
+            var resolver = new ScriptedResolver(ConflictDecision.Cancel);
+            ArchiveEngineRouter.Extract(zip, dest, new ArchiveOptions(), null, null,
+                CancellationToken.None, resolver);
+
+            TestHarness.Equal(0, resolver.Asked.Count, "没有冲突就不该问");
+            TestHarness.Equal("ONLY", File.ReadAllText(Path.Combine(dest, "only.txt")));
+        });
+
+        t.Run("同名文件：不传询问通道时保持旧行为（跳过 / 覆盖）", () =>
+        {
+            var dir = Path.Combine(workDir, "conflict-silent");
+            Directory.CreateDirectory(dir);
+            var src = Path.Combine(dir, "src");
+            Directory.CreateDirectory(src);
+            File.WriteAllText(Path.Combine(src, "a.txt"), "FROM-ARCHIVE");
+
+            var zip = Path.Combine(dir, "p.zip");
+            ArchiveEngineRouter.Create([Path.Combine(src, "a.txt")], zip,
+                new ArchiveOptions { Format = FormatRegistry.Zip }, null, CancellationToken.None);
+
+            var skipDest = Path.Combine(dir, "skip");
+            Directory.CreateDirectory(skipDest);
+            File.WriteAllText(Path.Combine(skipDest, "a.txt"), "ON-DISK");
+            ArchiveEngineRouter.Extract(zip, skipDest, new ArchiveOptions(), null, null, CancellationToken.None);
+            TestHarness.Equal("ON-DISK", File.ReadAllText(Path.Combine(skipDest, "a.txt")),
+                "不覆盖时盘上文件应保持原样（旧行为）");
+
+            var overDest = Path.Combine(dir, "over");
+            Directory.CreateDirectory(overDest);
+            File.WriteAllText(Path.Combine(overDest, "a.txt"), "ON-DISK");
+            ArchiveEngineRouter.Extract(zip, overDest, new ArchiveOptions { OverwriteExisting = true },
+                null, null, CancellationToken.None);
+            TestHarness.Equal("FROM-ARCHIVE", File.ReadAllText(Path.Combine(overDest, "a.txt")),
+                "勾选覆盖时应换成包内版本（旧行为）");
+        });
+
         t.Run("大文件流式压缩：10MB 随机数据往返无损坏", () =>
         {
             if (!has7z) TestHarness.Skip("本机未找到 7z.exe");
@@ -555,6 +701,70 @@ public static class CoreTests
             TestHarness.Equal(data.Length, roundtrip.Length, "往返后长度应一致");
             TestHarness.True(data.AsSpan().SequenceEqual(roundtrip), "往返后字节内容应完全一致");
         });
+    }
+
+    // ---------------------------------------------------------------
+    // 同名文件冲突测试的公共设施
+    // ---------------------------------------------------------------
+
+    /// <summary>
+    /// 按脚本逐次作答的冲突决策器，并记录每一处被问到的冲突。
+    /// 脚本用完了一律按「跳过」处理 —— 测试少写一个决策时宁可什么都没改，也不能悄悄覆盖。
+    /// </summary>
+    private sealed class ScriptedResolver(params ConflictDecision[] script) : IConflictResolver
+    {
+        private readonly Queue<ConflictDecision> _script = new(script);
+
+        public List<FileConflict> Asked { get; } = [];
+
+        public ConflictDecision Resolve(FileConflict conflict)
+        {
+            Asked.Add(conflict);
+            return _script.Count > 0 ? _script.Dequeue() : ConflictDecision.Skip;
+        }
+    }
+
+    /// <summary>在 dir 下造一个含指定文件名的 ZIP，每个文件的内容都是 FROM-ARCHIVE。</summary>
+    private static string MakeArchive(string dir, string[] names)
+    {
+        var src = Path.Combine(dir, "src");
+        Directory.CreateDirectory(src);
+        foreach (var name in names)
+            File.WriteAllText(Path.Combine(src, name), "FROM-ARCHIVE");
+
+        var zip = Path.Combine(dir, "p.zip");
+        ArchiveEngineRouter.Create(names.Select(n => Path.Combine(src, n)), zip,
+            new ArchiveOptions { Format = FormatRegistry.Zip }, null, CancellationToken.None);
+        return zip;
+    }
+
+    /// <summary>
+    /// 造 a/b/c.txt 三处同名冲突，按脚本解压，再逐条验证三种决策的结果：
+    /// 覆盖 → 换成包内版本；跳过 → 盘上版本保持不动；改名 → 多出一个「c (1).txt」。
+    /// </summary>
+    private static void RunDecisionScenario(IArchiveEngine engine, string tag, string workDir,
+                                            ScriptedResolver resolver)
+    {
+        var dir = Path.Combine(workDir, "conflict-" + tag);
+        var zip = MakeArchive(dir, ["a.txt", "b.txt", "c.txt"]);
+
+        var dest = Path.Combine(dir, "out");
+        Directory.CreateDirectory(dest);
+        foreach (var name in new[] { "a.txt", "b.txt", "c.txt" })
+            File.WriteAllText(Path.Combine(dest, name), "ON-DISK");
+
+        engine.Extract(zip, dest, new ArchiveOptions(), null, null, CancellationToken.None, resolver);
+
+        TestHarness.Equal(3, resolver.Asked.Count, "三处冲突都应被问到");
+        TestHarness.Equal("FROM-ARCHIVE", File.ReadAllText(Path.Combine(dest, "a.txt")),
+            "覆盖应换成包内版本");
+        TestHarness.Equal("ON-DISK", File.ReadAllText(Path.Combine(dest, "b.txt")),
+            "跳过应保留盘上版本");
+        TestHarness.Equal("ON-DISK", File.ReadAllText(Path.Combine(dest, "c.txt")),
+            "改名时原文件不应被动");
+        TestHarness.True(File.Exists(Path.Combine(dest, "c (1).txt")), "改名应生成 “c (1).txt”");
+        TestHarness.Equal("FROM-ARCHIVE", File.ReadAllText(Path.Combine(dest, "c (1).txt")),
+            "改名后的文件应是包内版本");
     }
 
     internal static byte[] RandomBytes(int count)

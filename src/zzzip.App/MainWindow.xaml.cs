@@ -182,7 +182,8 @@ public partial class MainWindow : Window
     {
         if (CurrentArchive is null) { MessageBox.Show("请先打开一个压缩包。", "zzzip"); return; }
         var archive = CurrentArchive;
-        RunAsync("一键解压中...", () => ArchiveEngineRouter.ExtractToOwnFolder(archive, MakeProgress(), _cts.Token));
+        RunAsync("一键解压中...", () => ArchiveEngineRouter.ExtractToOwnFolder(
+            archive, MakeProgress(), _cts.Token, new WpfConflictResolver(() => this)));
     }
 
     private void OnTestArchive(object sender, RoutedEventArgs e)
@@ -280,8 +281,9 @@ public partial class MainWindow : Window
         Task.Run(() =>
         {
             try { action(); }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not ExtractCancelledException)
             {
+                // 用户在冲突对话框里点了「取消」不算失败，静默收场即可
                 Dispatcher.Invoke(() =>
                     MessageBox.Show(ex.Message, "zzzip", MessageBoxButton.OK, MessageBoxImage.Warning));
             }

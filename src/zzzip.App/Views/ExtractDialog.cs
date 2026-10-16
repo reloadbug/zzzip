@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
+using zzzip.App.Services;
 using zzzip.Core;
 
 namespace zzzip.App.Views;
@@ -10,7 +11,10 @@ namespace zzzip.App.Views;
 public sealed class ExtractDialog : Window
 {
     private readonly TextBox _pathBox = new() { Margin = new Thickness(8, 4, 4, 4) };
-    private readonly CheckBox _overwrite = new() { Content = "覆盖已存在的文件", Margin = new Thickness(8, 4, 8, 4), IsChecked = true };
+    // 同名文件的处理策略：默认逐个询问，避免以前那种「勾了就静默覆盖」的默认值把用户文件闷掉
+    private readonly RadioButton _askOnConflict = new() { Content = "逐个询问我", Margin = new Thickness(8, 4, 14, 4), IsChecked = true };
+    private readonly RadioButton _overwriteAll = new() { Content = "全部覆盖", Margin = new Thickness(0, 4, 14, 4) };
+    private readonly RadioButton _skipAll = new() { Content = "全部跳过", Margin = new Thickness(0, 4, 8, 4) };
     private readonly CheckBox _keepArchive = new() { Content = "解压后保留压缩包", Margin = new Thickness(8, 4, 8, 4), IsChecked = true };
     private readonly PasswordBox _passwordBox = new() { Margin = new Thickness(8, 4, 8, 4) };
     private readonly TextBlock _summary = new() { Margin = new Thickness(8), Foreground = System.Windows.Media.Brushes.Gray };
@@ -50,7 +54,7 @@ public sealed class ExtractDialog : Window
         });
         root.Children.Add(Row("解压到", BuildPathRow()));
         root.Children.Add(Row("密码", _passwordBox));
-        root.Children.Add(_overwrite);
+        root.Children.Add(Row("同名文件", BuildConflictRow()));
         root.Children.Add(_keepArchive);
         root.Children.Add(_summary);
         root.Children.Add(_progress);
@@ -80,6 +84,15 @@ public sealed class ExtractDialog : Window
         panel.Children.Add(browse);
         DockPanel.SetDock(browse, Dock.Right);
         panel.Children.Add(_pathBox);
+        return panel;
+    }
+
+    private UIElement BuildConflictRow()
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+        panel.Children.Add(_askOnConflict);
+        panel.Children.Add(_overwriteAll);
+        panel.Children.Add(_skipAll);
         return panel;
     }
 
@@ -123,9 +136,15 @@ public sealed class ExtractDialog : Window
             ? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
             : _pathBox.Text;
 
+        // 三种策略：询问 / 全部覆盖 / 全部跳过。
+        // 「全部覆盖」与「全部跳过」都只是不给询问通道，由 options 决定静默行为；
+        // 「逐个询问」时不设覆盖，让内核先扫冲突再来问用户。
+        var askFirst = _askOnConflict.IsChecked == true;
+        var overwriteAll = _overwriteAll.IsChecked == true;
+
         var options = new ArchiveOptions
         {
-            OverwriteExisting = _overwrite.IsChecked == true,
+            OverwriteExisting = overwriteAll,
             KeepArchiveAfterExtract = _keepArchive.IsChecked == true,
             Password = string.IsNullOrEmpty(_passwordBox.Password) ? null : _passwordBox.Password,
         };
@@ -160,7 +179,10 @@ public sealed class ExtractDialog : Window
                     ? new Func<ArchiveEntry, bool>(e => selected.Contains(e.Path))
                     : null;
 
-                ArchiveEngineRouter.Extract(a, sub, options, predicate, progress, CancellationToken.None);
+                // 每个压缩包单独一份询问状态：多包解压时，前一个包选的「全部」不该顺延到下一个包
+                var resolver = askFirst ? new WpfConflictResolver(() => this) : null;
+
+                ArchiveEngineRouter.Extract(a, sub, options, predicate, progress, CancellationToken.None, resolver);
             }
         })
         .ContinueWith(t =>
@@ -171,8 +193,19 @@ public sealed class ExtractDialog : Window
                 cancel.IsEnabled = true;
                 if (t.IsFaulted)
                 {
-                    var msg = t.Exception?.GetBaseException().Message ?? "解压失败。";
-                    MessageBox.Show(msg, "zzzip", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    var failure = t.Exception?.GetBaseException();
+
+                    // 用户在冲突对话框里点了「取消」：这不是错误，不该弹报错框
+                    if (failure is ExtractCancelledException)
+                    {
+                        _status.Text = "已取消";
+                        DialogResult = false;
+                        Close();
+                        return;
+                    }
+
+                    MessageBox.Show(failure?.Message ?? "解压失败。", "zzzip",
+                                    MessageBoxButton.OK, MessageBoxImage.Warning);
                     _status.Text = "解压失败";
                     return;
                 }
